@@ -278,7 +278,7 @@ void reshade::runtime::build_font_atlas()
 
 	ImGui::SetCurrentContext(backup_context);
 
-	_show_splash = true;
+	_show_splash = false;
 
 	int width, height;
 	unsigned char *pixels;
@@ -1824,7 +1824,7 @@ void reshade::runtime::draw_gui_home()
 			save_config();
 			load_current_preset();
 
-			_show_splash = true;
+			_show_splash = false;
 			_preset_is_modified = false;
 			_last_preset_switching_time = _last_present_time;
 			_is_in_preset_transition = true;
