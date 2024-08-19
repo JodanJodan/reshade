@@ -1,0 +1,32 @@
+name: Build
+
+on:
+    push:
+        tags:
+            - 'v*.*.*'
+    pull_request:
+        branches:
+            - "main"
+
+jobs:
+    build:
+        runs-on: windows-2022
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                submodules: true
+            - name: Add msbuild to PATH
+              uses: microsoft/setup-msbuild@v2
+            - name: Build setup tool for 32-bit
+              run: msbuild Reshade.sln /p:Platform=32-bit /p:Configuration=Release
+            - name: Build setup tool for 64-bit
+              run: msbuild Reshade.sln /p:Platform=64-bit /p:Configuration=Release
+            - name: Build
+              run: msbuild Reshade.sln /p:Platform=64-bit /p:Configuration="Release Setup"
+            - name: Upload
+              uses: actions/upload-artifact@v4
+              with:
+                name: ${{ github.ref_name }}
+                path: ./bin/AnyCPU/Release/ReShade Setup.exe
+                if-no-files-found: error
