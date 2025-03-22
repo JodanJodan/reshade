@@ -183,7 +183,7 @@ namespace reshade { namespace api
 		amplification_and_mesh_shader,
 		/// <summary>
 		/// Specifies whether ray tracing is supported.
-		/// If this feature is not present, <see cref="resource_view_type::acceleration_structure"/>, <see cref="command_list::dispatch_rays"/>, <see cref="command_list::copy_acceleration_structure"/> and <see cref="command_list::build_acceleration_structure"/> must not be used.
+		/// If this feature is not present, <see cref="resource_view_type::acceleration_structure"/>, <see cref="command_list::dispatch_rays"/>, <see cref="command_list::copy_acceleration_structure"/>, <see cref="command_list::build_acceleration_structure"/> and <see cref="command_list::query_acceleration_structures"/> must not be used.
 		/// </summary>
 		ray_tracing,
 	};
@@ -269,21 +269,21 @@ namespace reshade { namespace api
 		/// Gets a reference to user-defined data from the object that was previously allocated via <see cref="create_private_data"/>.
 		/// </summary>
 		template <typename T>
-		T &get_private_data() const
+		T *get_private_data() const
 		{
 			uint64_t res;
 			get_private_data(reinterpret_cast<const uint8_t *>(&__uuidof(T)), &res);
-			return *reinterpret_cast<T *>(static_cast<uintptr_t>(res));
+			return reinterpret_cast<T *>(static_cast<uintptr_t>(res));
 		}
 		/// <summary>
 		/// Allocates user-defined data and stores it in the object.
 		/// </summary>
 		template <typename T, typename... Args>
-		T &create_private_data(Args &&... args)
+		T *create_private_data(Args &&... args)
 		{
 			uint64_t res = reinterpret_cast<uintptr_t>(new T(static_cast<Args &&>(args)...));
 			set_private_data(reinterpret_cast<const uint8_t *>(&__uuidof(T)),  res);
-			return *reinterpret_cast<T *>(static_cast<uintptr_t>(res));
+			return reinterpret_cast<T *>(static_cast<uintptr_t>(res));
 		}
 		/// <summary>
 		/// Frees user-defined data that was previously allocated via <see cref="create_private_data"/>.
@@ -291,9 +291,7 @@ namespace reshade { namespace api
 		template <typename T>
 		void destroy_private_data()
 		{
-			uint64_t res;
-			get_private_data(reinterpret_cast<const uint8_t *>(&__uuidof(T)), &res);
-			delete  reinterpret_cast<T *>(static_cast<uintptr_t>(res));
+			delete get_private_data<T>();
 			set_private_data(reinterpret_cast<const uint8_t *>(&__uuidof(T)), 0);
 		}
 	};
@@ -519,10 +517,10 @@ namespace reshade { namespace api
 		/// Creates a new query heap.
 		/// </summary>
 		/// <param name="type">Type of queries that will be used with this query heap.</param>
-		/// <param name="size">Number of queries to allocate in the query heap.</param>
+		/// <param name="count">Number of queries to allocate in the query heap.</param>
 		/// <param name="out_heap">Pointer to a variable that is set to the handle of the created query heap.</param>
 		/// <returns><see langword="true"/> if the query heap was successfully created, <see langword="false"/> otherwise (in this case <paramref name="out_heap"/> is set to zero).</returns>
-		virtual bool create_query_heap(query_type type, uint32_t size, query_heap *out_heap) = 0;
+		virtual bool create_query_heap(query_type type, uint32_t count, query_heap *out_heap) = 0;
 		/// <summary>
 		/// Instantly destroys a query heap that was previously created via <see cref="create_query_heap"/>.
 		/// </summary>
@@ -944,7 +942,7 @@ namespace reshade { namespace api
 		/// <param name="dest_y">Optional Y offset (in texels) that defines the region in the <paramref name="dest"/>ination texture to resolve to.</param>
 		/// <param name="dest_z">Optional Z offset (in texels) that defines the region in the <paramref name="dest"/>ination texture to resolve to.</param>
 		/// <param name="format">Format of the resource data.</param>
-		virtual void resolve_texture_region(resource source, uint32_t source_subresource, const subresource_box *source_box, resource dest, uint32_t dest_subresource, int32_t dest_x, int32_t dest_y, int32_t dest_z, format format) = 0;
+		virtual void resolve_texture_region(resource source, uint32_t source_subresource, const subresource_box *source_box, resource dest, uint32_t dest_subresource, uint32_t dest_x, uint32_t dest_y, uint32_t dest_z, format format) = 0;
 
 		/// <summary>
 		/// Clears the resource referenced by the depth-stencil view.
@@ -1106,6 +1104,17 @@ namespace reshade { namespace api
 		/// <param name="dest">Acceleration structure to write data to.</param>
 		/// <param name="mode">Choose between building a new or updating an existing acceleration structure.</param>
 		virtual void build_acceleration_structure(acceleration_structure_type type, acceleration_structure_build_flags flags, uint32_t input_count, const acceleration_structure_build_input *inputs, api::resource scratch, uint64_t scratch_offset, resource_view source, resource_view dest, acceleration_structure_build_mode mode) = 0;
+
+		/// <summary>
+		/// Queries acceleration structure size parameters.
+		/// This can be used to figure out destination resource requirements for <see cref="copy_acceleration_structure"/>.
+		/// </summary>
+		/// <param name="count">Number of acceleration structures to query.</param>
+		/// <param name="acceleration_structures">Pointer to the first element of an array of acceleration structures.</param>
+		/// <param name="heap">Query heap that will manage the results of the query.</param>
+		/// <param name="type">Type of the acceleration structure query.</param>
+		/// <param name="first">Index of the first query in the query heap to write the result to.</param>
+		virtual void query_acceleration_structures(uint32_t count, const resource_view *acceleration_structures, query_heap heap, query_type type, uint32_t first) = 0;
 	};
 
 	/// <summary>
@@ -1228,6 +1237,16 @@ namespace reshade { namespace api
 		/// Set to zero to use the default.
 		/// </summary>
 		float fullscreen_refresh_rate = 0;
+
+		/// <summary>
+		/// Defines how to synchronize presentation of a frame with the vertical blank.
+		/// <list type="bullet">
+		/// <item>0: Disable synchronization, presentation occurs immediately.</item>
+		/// <item>1-4: Synchronize for at least n vertical blanks.</item>
+		/// <item>UINT32_MAX: Use the default set by the application.</item>
+		/// </list>
+		/// </summary>
+		uint32_t sync_interval = UINT32_MAX;
 	};
 
 	/// <summary>

@@ -63,7 +63,7 @@ bool D3D12GraphicsCommandList::check_and_upgrade_interface(REFIID riid)
 			if (FAILED(_orig->QueryInterface(riid, reinterpret_cast<void **>(&new_interface))))
 				return false;
 #if 0
-			LOG(DEBUG) << "Upgrading ID3D12GraphicsCommandList" << _interface_version << " object " << this << " to ID3D12GraphicsCommandList" << version << '.';
+			reshade::log::message(reshade::log::level::debug, "Upgrading ID3D12GraphicsCommandList%hu object %p to ID3D12GraphicsCommandList%hu.", _interface_version, this, version);
 #endif
 			_orig->Release();
 			_orig = static_cast<ID3D12GraphicsCommandList *>(new_interface);
@@ -107,13 +107,13 @@ ULONG   STDMETHODCALLTYPE D3D12GraphicsCommandList::Release()
 	const auto orig = _orig;
 	const auto interface_version = _interface_version;
 #if 0
-	LOG(DEBUG) << "Destroying " << "ID3D12GraphicsCommandList" << interface_version << " object " << this << " (" << orig << ").";
+	reshade::log::message(reshade::log::level::debug, "Destroying ID3D12GraphicsCommandList%hu object %p (%p).", interface_version, this, orig);
 #endif
 	delete this;
 
 	const ULONG ref_orig = orig->Release();
 	if (ref_orig != 0) // Verify internal reference count
-		LOG(WARN) << "Reference count for " << "ID3D12GraphicsCommandList" << interface_version << " object " << this << " (" << orig << ") is inconsistent (" << ref_orig << ").";
+		reshade::log::message(reshade::log::level::warning, "Reference count for ID3D12GraphicsCommandList%hu object %p (%p) is inconsistent (%lu).", interface_version, this, orig, ref_orig);
 	return 0;
 }
 
@@ -194,7 +194,7 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::ClearState(ID3D12PipelineState 
 
 	reshade::invoke_addon_event<reshade::addon_event::bind_pipeline>(this, reshade::api::pipeline_stage::all, to_handle(pPipelineState));
 
-	// When ClearState is called, all currently bound resources are unbound.
+	// When 'ClearState' is called, all currently bound resources are unbound.
 	// The primitive topology is set to D3D_PRIMITIVE_TOPOLOGY_UNDEFINED. Viewports, scissor rectangles, stencil reference value, and the blend factor are set to empty values (all zeros).
 	const reshade::api::dynamic_state states[4] = { reshade::api::dynamic_state::primitive_topology, reshade::api::dynamic_state::blend_constant, reshade::api::dynamic_state::front_stencil_reference_value, reshade::api::dynamic_state::back_stencil_reference_value };
 	const uint32_t values[4] = { static_cast<uint32_t>(reshade::api::primitive_topology::undefined), 0, 0, 0 };
@@ -261,9 +261,9 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::CopyTextureRegion(const D3D12_T
 
 		if (use_dst_box)
 		{
-			dst_box.left = static_cast<int32_t>(DstX);
-			dst_box.top = static_cast<int32_t>(DstY);
-			dst_box.front = static_cast<int32_t>(DstZ);
+			dst_box.left = DstX;
+			dst_box.top = DstY;
+			dst_box.front = DstZ;
 
 			if (pSrcBox != nullptr)
 			{
@@ -297,9 +297,9 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::CopyTextureRegion(const D3D12_T
 		reshade::has_addon_event<reshade::addon_event::copy_buffer_to_texture>())
 	{
 		reshade::api::subresource_box dst_box;
-		dst_box.left = static_cast<int32_t>(DstX);
-		dst_box.top = static_cast<int32_t>(DstY);
-		dst_box.front = static_cast<int32_t>(DstZ);
+		dst_box.left = DstX;
+		dst_box.top = DstY;
+		dst_box.front = DstZ;
 
 		if (pSrcBox != nullptr)
 		{
@@ -881,7 +881,8 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::EndQuery(ID3D12QueryHeap *pQuer
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::ResolveQueryData(ID3D12QueryHeap *pQueryHeap, D3D12_QUERY_TYPE Type, UINT StartIndex, UINT NumQueries, ID3D12Resource *pDestinationBuffer, UINT64 AlignedDestinationBufferOffset)
 {
 #if RESHADE_ADDON >= 2
-	if (reshade::invoke_addon_event<reshade::addon_event::copy_query_heap_results>(this, to_handle(pQueryHeap), reshade::d3d12::convert_query_type(Type), StartIndex, NumQueries, to_handle(pDestinationBuffer), AlignedDestinationBufferOffset, static_cast<uint32_t>(sizeof(uint64_t))))
+	if (const reshade::api::query_type query_type = reshade::d3d12::convert_query_type(Type);
+		reshade::invoke_addon_event<reshade::addon_event::copy_query_heap_results>(this, to_handle(pQueryHeap), query_type, StartIndex, NumQueries, to_handle(pDestinationBuffer), AlignedDestinationBufferOffset, reshade::d3d12::get_query_size(query_type).first))
 		return;
 #endif
 	_orig->ResolveQueryData(pQueryHeap, Type, StartIndex, NumQueries, pDestinationBuffer, AlignedDestinationBufferOffset);
@@ -941,11 +942,11 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::ResolveSubresourceRegion(ID3D12
 
 	if (use_src_box)
 	{
-		src_box.left = pSrcRect->left;
-		src_box.top = pSrcRect->top;
+		src_box.left = static_cast<uint32_t>(pSrcRect->left);
+		src_box.top = static_cast<uint32_t>(pSrcRect->top);
 		src_box.front = 0;
-		src_box.right = pSrcRect->right;
-		src_box.bottom = pSrcRect->bottom;
+		src_box.right = static_cast<uint32_t>(pSrcRect->right);
+		src_box.bottom = static_cast<uint32_t>(pSrcRect->bottom);
 		src_box.back = 1;
 	}
 
@@ -1062,6 +1063,28 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::BuildRaytracingAccelerationStru
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::EmitRaytracingAccelerationStructurePostbuildInfo(const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC *pDesc, UINT NumSourceAccelerationStructures, const D3D12_GPU_VIRTUAL_ADDRESS *pSourceAccelerationStructureData)
 {
+	assert(pDesc != nullptr);
+
+#if RESHADE_ADDON >= 2
+	if (reshade::has_addon_event<reshade::addon_event::query_acceleration_structures>())
+	{
+		reshade::api::resource buffer = {};
+		uint64_t offset = 0;
+		if (_device_impl->resolve_gpu_address(pDesc->DestBuffer, &buffer, &offset))
+		{
+			if (const reshade::api::query_type query_type = reshade::d3d12::convert_acceleration_structure_post_build_info_type(pDesc->InfoType);
+				reshade::invoke_addon_event<reshade::addon_event::query_acceleration_structures>(
+					this,
+					NumSourceAccelerationStructures,
+					reinterpret_cast<const reshade::api::resource_view *>(pSourceAccelerationStructureData),
+					reshade::api::query_heap { buffer.handle },
+					query_type,
+					static_cast<uint32_t>(offset / reshade::d3d12::get_query_size(query_type).first)))
+				return;
+		}
+	}
+#endif
+
 	assert(_interface_version >= 4);
 	static_cast<ID3D12GraphicsCommandList4 *>(_orig)->EmitRaytracingAccelerationStructurePostbuildInfo(pDesc, NumSourceAccelerationStructures, pSourceAccelerationStructureData);
 }

@@ -7,6 +7,7 @@
 
 #include "descriptor_heap.hpp"
 #include "reshade_api_object_impl.hpp"
+#include <map>
 #include <unordered_map>
 #include <concurrent_vector.h>
 
@@ -58,6 +59,7 @@ namespace reshade::d3d12
 		bool create_pipeline(api::pipeline_layout layout, uint32_t subobject_count, const api::pipeline_subobject *subobjects, api::pipeline *out_pipeline) final;
 		void destroy_pipeline(api::pipeline pipeline) final;
 
+		bool create_pipeline_layout(uint32_t param_count, const api::pipeline_layout_param *params, api::pipeline_layout *out_layout, D3D12_ROOT_SIGNATURE_FLAGS flags);
 		bool create_pipeline_layout(uint32_t param_count, const api::pipeline_layout_param *params, api::pipeline_layout *out_layout) final;
 		void destroy_pipeline_layout(api::pipeline_layout layout) final;
 
@@ -76,7 +78,7 @@ namespace reshade::d3d12
 		void copy_descriptor_tables(uint32_t count, const api::descriptor_table_copy *copies) final;
 		void update_descriptor_tables(uint32_t count, const api::descriptor_table_update *updates) final;
 
-		bool create_query_heap(api::query_type type, uint32_t size, api::query_heap *out_heap) final;
+		bool create_query_heap(api::query_type type, uint32_t count, api::query_heap *out_heap) final;
 		void destroy_query_heap(api::query_heap heap) final;
 
 		bool get_query_heap_results(api::query_heap heap, uint32_t first, uint32_t count, void *results, uint32_t stride) final;
@@ -96,7 +98,7 @@ namespace reshade::d3d12
 
 		bool get_pipeline_shader_group_handles(api::pipeline pipeline, uint32_t first, uint32_t count, void *out_handles) final;
 
-		command_list_immediate_impl *get_first_immediate_command_list();
+		command_list_immediate_impl *get_immediate_command_list();
 
 #if RESHADE_ADDON >= 2
 		bool resolve_gpu_address(D3D12_GPU_VIRTUAL_ADDRESS address, api::resource *out_resource, uint64_t *out_offset, bool *out_acceleration_structure = nullptr) const;
@@ -151,7 +153,7 @@ namespace reshade::d3d12
 		mutable std::shared_mutex _resource_mutex;
 #if RESHADE_ADDON >= 2
 		concurrency::concurrent_vector<D3D12DescriptorHeap *> _descriptor_heaps;
-		std::vector<std::tuple<ID3D12Resource *, D3D12_GPU_VIRTUAL_ADDRESS_RANGE, bool>> _buffer_gpu_addresses; // TODO: Replace with interval tree
+		std::map<D3D12_GPU_VIRTUAL_ADDRESS, std::tuple<UINT64, ID3D12Resource *, bool>> _buffer_gpu_addresses;
 #endif
 		std::unordered_map<SIZE_T, std::pair<ID3D12Resource *, api::resource_view_desc>> _views;
 

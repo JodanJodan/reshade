@@ -30,12 +30,14 @@ namespace reshade::d3d12
 
 	struct query_heap_extra_data
 	{
-		UINT size;
+		api::query_type type;
+		UINT count;
 		ID3D12Resource *readback_resource;
 		std::pair<ID3D12Fence *, UINT64> *fences;
 	};
 
-	extern const GUID extra_data_guid;
+	// {B2257A30-4014-46EA-BD88-DEC21DB6A02B}
+	inline constexpr GUID extra_data_guid = { 0xB2257A30, 0x4014, 0x46EA, { 0xBD, 0x88, 0xDE, 0xC2, 0x1D, 0xB6, 0xA0, 0x2B } };
 
 	auto convert_format(api::format format) -> DXGI_FORMAT;
 	auto convert_format(DXGI_FORMAT format) -> api::format;
@@ -128,6 +130,7 @@ namespace reshade::d3d12
 	auto convert_primitive_topology_type(api::primitive_topology value) -> D3D12_PRIMITIVE_TOPOLOGY_TYPE;
 	auto convert_primitive_topology_type(D3D12_PRIMITIVE_TOPOLOGY_TYPE value) -> api::primitive_topology;
 
+	auto get_query_size(api::query_type type) -> std::pair<uint32_t, uint32_t>; // { struct size, offset in struct }
 	auto convert_query_type(api::query_type type) -> D3D12_QUERY_TYPE;
 	auto convert_query_type(D3D12_QUERY_TYPE type) -> api::query_type;
 	auto convert_query_type_to_heap_type(api::query_type type) -> D3D12_QUERY_HEAP_TYPE;
@@ -155,6 +158,8 @@ namespace reshade::d3d12
 	auto convert_acceleration_structure_copy_mode(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_COPY_MODE value) -> api::acceleration_structure_copy_mode;
 	auto convert_acceleration_structure_build_flags(api::acceleration_structure_build_flags value, api::acceleration_structure_build_mode mode) -> D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS;
 	auto convert_acceleration_structure_build_flags(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS value) -> api::acceleration_structure_build_flags;
+	auto convert_acceleration_structure_post_build_info_type(api::query_type value) -> D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_TYPE;
+	auto convert_acceleration_structure_post_build_info_type(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_TYPE value) -> api::query_type;
 
 	void convert_acceleration_structure_build_input(const api::acceleration_structure_build_input &build_input, D3D12_RAYTRACING_GEOMETRY_DESC &geometry);
 	api::acceleration_structure_build_input convert_acceleration_structure_build_input(const D3D12_RAYTRACING_GEOMETRY_DESC &geometry);

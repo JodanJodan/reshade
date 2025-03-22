@@ -24,7 +24,7 @@ void ReShadeLogMessage([[maybe_unused]] HMODULE module, int level, const char *m
 	}
 #endif
 
-	reshade::log::message(static_cast<reshade::log::level>(level)) << prefix << message;
+	reshade::log::message(static_cast<reshade::log::level>(level), "%.*s%s", static_cast<int>(prefix.size()), prefix.c_str(), message);
 }
 
 void ReShadeGetBasePath(char *path, size_t *size)
@@ -119,8 +119,6 @@ void ReShadeSetConfigArray(HMODULE, reshade::api::effect_runtime *runtime, const
 
 	config.set(section_string, key_string, elements);
 }
-
-#if RESHADE_ADDON && RESHADE_FX
 
 #include "d3d9/d3d9_impl_device.hpp"
 #include "d3d9/d3d9_impl_swapchain.hpp"
@@ -311,10 +309,9 @@ void ReShadeUpdateAndPresentEffectRuntime(reshade::api::effect_runtime *runtime)
 	present_queue->flush_immediate_command_list();
 }
 
-#endif
+#if RESHADE_GUI
 
-#if RESHADE_ADDON && RESHADE_GUI
-
+#include "imgui_function_table_19180.hpp"
 #include "imgui_function_table_19040.hpp"
 #include "imgui_function_table_19000.hpp"
 #include "imgui_function_table_18971.hpp"
@@ -322,6 +319,8 @@ void ReShadeUpdateAndPresentEffectRuntime(reshade::api::effect_runtime *runtime)
 
 extern "C" __declspec(dllexport) const void *ReShadeGetImGuiFunctionTable(uint32_t version)
 {
+	if (version == 19180)
+		return &g_imgui_function_table_19180;
 	if (version == 19040)
 		return &g_imgui_function_table_19040;
 	if (version >= 19000 && version < 19040)
@@ -331,7 +330,7 @@ extern "C" __declspec(dllexport) const void *ReShadeGetImGuiFunctionTable(uint32
 	if (version == 18600)
 		return &g_imgui_function_table_18600;
 
-	LOG(ERROR) << "Failed to retrieve ImGui function table, because the requested ImGui version (" << version << ") is not supported.";
+	reshade::log::message(reshade::log::level::error, "Failed to retrieve ImGui function table, because the requested ImGui version (%u) is not supported.", version);
 	return nullptr;
 }
 

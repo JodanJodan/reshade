@@ -3,25 +3,18 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-#define INITGUID
 // Set version to DirectInput 7
 #define DIRECTINPUT_VERSION 0x0700
 
 #include <dinput.h>
-#include "dll_log.hpp" // Include late to get HRESULT log overloads
+#include "dll_log.hpp" // Include late to get 'hr_to_string' helper function
 #include "hook_manager.hpp"
-
-extern bool is_blocking_mouse_input();
-extern bool is_blocking_keyboard_input();
+#include "input.hpp"
 
 #define IDirectInputDevice_SetCooperativeLevel_Impl(vtable_index, device_interface_version, encoding) \
 	HRESULT STDMETHODCALLTYPE IDirectInputDevice##device_interface_version##encoding##_SetCooperativeLevel(IDirectInputDevice##device_interface_version##encoding *pDevice, HWND hwnd, DWORD dwFlags) \
 	{ \
-		LOG(INFO) << "Redirecting " << "IDirectInputDevice::SetCooperativeLevel" << '(' \
-			<<   "this = " << pDevice \
-			<< ", hwnd = " << hwnd \
-			<< ", dwFlags = " << std::hex << dwFlags << std::dec \
-			<< ')' << " ..."; \
+		reshade::log::message(reshade::log::level::info, "Redirecting IDirectInputDevice::SetCooperativeLevel(this = %p, hwnd = %p, dwFlags = %#x) ...", pDevice, hwnd, dwFlags); \
 		\
 		if (dwFlags & DISCL_EXCLUSIVE) \
 		{ \
@@ -33,7 +26,7 @@ extern bool is_blocking_keyboard_input();
 				/* Need to remove exclusive flag, otherwise DirectInput will block input window messages and input.cpp will not receive input anymore */ \
 				dwFlags = (dwFlags & ~DISCL_EXCLUSIVE) | DISCL_NONEXCLUSIVE; \
 				\
-				LOG(INFO) << "> Replacing flags with " << std::hex << dwFlags << std::dec << '.'; \
+				reshade::log::message(reshade::log::level::info, "> Replacing flags with %#x.", dwFlags); \
 			} \
 		} \
 		\
@@ -47,30 +40,28 @@ IDirectInputDevice_SetCooperativeLevel_Impl(13, 2, W)
 IDirectInputDevice_SetCooperativeLevel_Impl(13, 7, A)
 IDirectInputDevice_SetCooperativeLevel_Impl(13, 7, W)
 
+// It is technically possible to associate these hooks back to a device (cooperative level), but it may not be the same window as ReShade renders on
 #define IDirectInputDevice_GetDeviceState_Impl(vtable_index, device_interface_version, encoding) \
 	HRESULT STDMETHODCALLTYPE IDirectInputDevice##device_interface_version##encoding##_GetDeviceState(IDirectInputDevice##device_interface_version##encoding *pDevice, DWORD cbData, LPVOID lpvData) \
 	{ \
-		DIDEVICEINSTANCE##encoding info = { sizeof(info) }; \
-		pDevice->GetDeviceInfo(&info); \
-		switch (LOBYTE(info.dwDevType)) \
+		const HRESULT hr = reshade::hooks::call(IDirectInputDevice##device_interface_version##encoding##_GetDeviceState, reshade::hooks::vtable_from_instance(pDevice) + vtable_index)(pDevice, cbData, lpvData); \
+		if (SUCCEEDED(hr)) \
 		{ \
-		case DIDEVTYPE_MOUSE: \
-			if (is_blocking_mouse_input()) \
+			DIDEVICEINSTANCE##encoding info = { sizeof(info) }; \
+			pDevice->GetDeviceInfo(&info); \
+			switch (LOBYTE(info.dwDevType)) \
 			{ \
-				std::memset(lpvData, 0, cbData); \
-				return DI_OK; \
+			case DIDEVTYPE_MOUSE: \
+				if (reshade::input::is_blocking_any_mouse_input()) \
+					std::memset(lpvData, 0, cbData); \
+				break; \
+			case DIDEVTYPE_KEYBOARD: \
+				if (reshade::input::is_blocking_any_keyboard_input()) \
+					std::memset(lpvData, 0, cbData); \
+				break; \
 			} \
-			break; \
-		case DIDEVTYPE_KEYBOARD: \
-			if (is_blocking_keyboard_input()) \
-			{ \
-				std::memset(lpvData, 0, cbData); \
-				return DI_OK; \
-			} \
-			break; \
 		} \
-		\
-		return reshade::hooks::call(IDirectInputDevice##device_interface_version##encoding##_GetDeviceState, reshade::hooks::vtable_from_instance(pDevice) + vtable_index)(pDevice, cbData, lpvData); \
+		return hr; \
 	}
 
 IDirectInputDevice_GetDeviceState_Impl(9,  , A)
@@ -83,30 +74,30 @@ IDirectInputDevice_GetDeviceState_Impl(9, 7, W)
 #define IDirectInputDevice_GetDeviceData_Impl(vtable_index, device_interface_version, encoding) \
 	HRESULT STDMETHODCALLTYPE IDirectInputDevice##device_interface_version##encoding##_GetDeviceData(IDirectInputDevice##device_interface_version##encoding *pDevice, DWORD cbObjectData, LPDIDEVICEOBJECTDATA rgdod, LPDWORD pdwInOut, DWORD dwFlags) \
 	{ \
-		if ((dwFlags & DIGDD_PEEK) == 0) \
+		HRESULT hr = reshade::hooks::call(IDirectInputDevice##device_interface_version##encoding##_GetDeviceData, reshade::hooks::vtable_from_instance(pDevice) + vtable_index)(pDevice, cbObjectData, rgdod, pdwInOut, dwFlags); \
+		if (SUCCEEDED(hr) && (dwFlags & DIGDD_PEEK) == 0) \
 		{ \
 			DIDEVICEINSTANCE##encoding info = { sizeof(info) }; \
 			pDevice->GetDeviceInfo(&info); \
 			switch (LOBYTE(info.dwDevType)) \
 			{ \
 			case DIDEVTYPE_MOUSE: \
-				if (is_blocking_mouse_input()) \
+				if (reshade::input::is_blocking_any_mouse_input()) \
 				{ \
 					*pdwInOut = 0; \
-					return DI_OK; \
+					hr = DI_OK; /* Overwrite potential 'DI_BUFFEROVERFLOW' */ \
 				} \
 				break; \
 			case DIDEVTYPE_KEYBOARD: \
-				if (is_blocking_keyboard_input()) \
+				if (reshade::input::is_blocking_any_keyboard_input()) \
 				{ \
 					*pdwInOut = 0; \
-					return DI_OK; \
+					hr = DI_OK; \
 				} \
 				break; \
 			} \
 		} \
-		\
-		return reshade::hooks::call(IDirectInputDevice##device_interface_version##encoding##_GetDeviceData, reshade::hooks::vtable_from_instance(pDevice) + vtable_index)(pDevice, cbObjectData, rgdod, pdwInOut, dwFlags); \
+		return hr; \
 	}
 
 IDirectInputDevice_GetDeviceData_Impl(10,  , A)
@@ -119,12 +110,11 @@ IDirectInputDevice_GetDeviceData_Impl(10, 7, W)
 #define IDirectInput_CreateDevice_Impl(vtable_index, factory_interface_version, device_interface_version, encoding) \
 	HRESULT STDMETHODCALLTYPE IDirectInput##factory_interface_version##encoding##_CreateDevice(IDirectInput##factory_interface_version##encoding *pDI, REFGUID rguid, LPDIRECTINPUTDEVICE##device_interface_version##encoding *lplpDirectInputDevice, LPUNKNOWN pUnkOuter) \
 	{ \
-		LOG(INFO) << "Redirecting " << "IDirectInput" #factory_interface_version #encoding "::CreateDevice" << '(' \
-			<<   "this = " << pDI \
-			<< ", rguid = " << rguid \
-			<< ", lplpDirectInputDevice = " << lplpDirectInputDevice \
-			<< ", pUnkOuter = " << pUnkOuter \
-			<< ')' << " ..."; \
+		reshade::log::message( \
+			reshade::log::level::info, \
+			"Redirecting IDirectInput" #factory_interface_version #encoding "::CreateDevice(this = %p, rguid = %s, lplpDirectInputDevice = %p, pUnkOuter = %p) ...", \
+			pDI, reshade::log::iid_to_string(rguid).c_str(), lplpDirectInputDevice, pUnkOuter); \
+		\
 		const HRESULT hr = reshade::hooks::call(IDirectInput##factory_interface_version##encoding##_CreateDevice, reshade::hooks::vtable_from_instance(pDI) + vtable_index)(pDI, rguid, lplpDirectInputDevice, pUnkOuter); \
 		if (SUCCEEDED(hr)) \
 		{ \
@@ -134,20 +124,18 @@ IDirectInputDevice_GetDeviceData_Impl(10, 7, W)
 		} \
 		else \
 		{ \
-			LOG(WARN) << "IDirectInput" #factory_interface_version #encoding "::CreateDevice" << " failed with error code " << hr << '.'; \
+			reshade::log::message(reshade::log::level::warning, "IDirectInput" #factory_interface_version #encoding "::CreateDevice failed with error code %s.", reshade::log::hr_to_string(hr).c_str()); \
 		} \
 		return hr; \
 	}
 #define IDirectInput_CreateDeviceEx_Impl(vtable_index, factory_interface_version, device_interface_version, encoding) \
 	HRESULT STDMETHODCALLTYPE IDirectInput##factory_interface_version##encoding##_CreateDeviceEx(IDirectInput##factory_interface_version##encoding *pDI, REFGUID rguid, REFGUID riid, LPVOID *ppvOut, LPUNKNOWN pUnkOuter) \
 	{ \
-		LOG(INFO) << "Redirecting " << "IDirectInput" #factory_interface_version #encoding "::CreateDeviceEx" << '(' \
-			<<   "this = " << pDI \
-			<< ", rguid = " << rguid \
-			<< ", riid = " << riid \
-			<< ", ppvOut = " << ppvOut \
-			<< ", pUnkOuter = " << pUnkOuter \
-			<< ')' << " ..."; \
+		reshade::log::message( \
+			reshade::log::level::info, \
+			"Redirecting IDirectInput" #factory_interface_version #encoding "::CreateDeviceEx(this = %p, rguid = %s, riid = %s, ppvOut = %p, pUnkOuter = %p) ...", \
+			pDI, reshade::log::iid_to_string(rguid).c_str(), reshade::log::iid_to_string(riid).c_str(), ppvOut, pUnkOuter); \
+		\
 		const HRESULT hr = reshade::hooks::call(IDirectInput##factory_interface_version##encoding##_CreateDeviceEx, reshade::hooks::vtable_from_instance(pDI) + vtable_index)(pDI, rguid, riid, ppvOut, pUnkOuter); \
 		if (SUCCEEDED(hr)) \
 		{ \
@@ -157,7 +145,7 @@ IDirectInputDevice_GetDeviceData_Impl(10, 7, W)
 		} \
 		else \
 		{ \
-			LOG(WARN) << "IDirectInput" #factory_interface_version #encoding "::CreateDeviceEx" << " failed with error code " << hr << '.'; \
+			reshade::log::message(reshade::log::level::warning, "IDirectInput" #factory_interface_version #encoding "::CreateDeviceEx failed with error code %s.", reshade::log::hr_to_string(hr).c_str()); \
 		} \
 		return hr; \
 	}
@@ -173,12 +161,7 @@ IDirectInput_CreateDeviceEx_Impl(9, 7, 7, W)
 
 extern "C" HRESULT WINAPI DirectInputCreateA(HINSTANCE hinst, DWORD dwVersion, LPDIRECTINPUTA *ppDI, LPUNKNOWN punkOuter)
 {
-	LOG(INFO) << "Redirecting " << "DirectInputCreateA" << '('
-		<<   "hinst = " << hinst
-		<< ", dwVersion = " << std::hex << dwVersion << std::dec
-		<< ", ppDI = " << ppDI
-		<< ", punkOuter = " << punkOuter
-		<< ')' << " ...";
+	reshade::log::message(reshade::log::level::info, "Redirecting DirectInputCreateA(hinst = %p, dwVersion = %x, ppDI = %p, punkOuter = %p) ...", hinst, dwVersion, ppDI, punkOuter);
 
 	const HRESULT hr = reshade::hooks::call(DirectInputCreateA)(hinst, dwVersion, ppDI, punkOuter);
 	if (SUCCEEDED(hr))
@@ -187,7 +170,7 @@ extern "C" HRESULT WINAPI DirectInputCreateA(HINSTANCE hinst, DWORD dwVersion, L
 	}
 	else
 	{
-		LOG(WARN) << "DirectInputCreateA" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "DirectInputCreateA failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 
 	return hr;
@@ -195,12 +178,7 @@ extern "C" HRESULT WINAPI DirectInputCreateA(HINSTANCE hinst, DWORD dwVersion, L
 
 extern "C" HRESULT WINAPI DirectInputCreateW(HINSTANCE hinst, DWORD dwVersion, LPDIRECTINPUTW *ppDI, LPUNKNOWN punkOuter)
 {
-	LOG(INFO) << "Redirecting " << "DirectInputCreateW" << '('
-		<<   "hinst = " << hinst
-		<< ", dwVersion = " << std::hex << dwVersion << std::dec
-		<< ", ppDI = " << ppDI
-		<< ", punkOuter = " << punkOuter
-		<< ')' << " ...";
+	reshade::log::message(reshade::log::level::info, "Redirecting DirectInputCreateW(hinst = %p, dwVersion = %x, ppDI = %p, punkOuter = %p) ...", hinst, dwVersion, ppDI, punkOuter);
 
 	const HRESULT hr = reshade::hooks::call(DirectInputCreateW)(hinst, dwVersion, ppDI, punkOuter);
 	if (SUCCEEDED(hr))
@@ -209,7 +187,7 @@ extern "C" HRESULT WINAPI DirectInputCreateW(HINSTANCE hinst, DWORD dwVersion, L
 	}
 	else
 	{
-		LOG(WARN) << "DirectInputCreateW" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "DirectInputCreateW failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 
 	return hr;
@@ -217,18 +195,15 @@ extern "C" HRESULT WINAPI DirectInputCreateW(HINSTANCE hinst, DWORD dwVersion, L
 
 extern "C" HRESULT WINAPI DirectInputCreateEx(HINSTANCE hinst, DWORD dwVersion, REFIID riidltf, LPVOID *ppvOut, LPUNKNOWN punkOuter)
 {
-	LOG(INFO) << "Redirecting " << "DirectInputCreateEx" << '('
-		<<   "hinst = " << hinst
-		<< ", dwVersion = " << std::hex << dwVersion << std::dec
-		<< ", riidltf = " << riidltf
-		<< ", ppvOut = " << ppvOut
-		<< ", punkOuter = " << punkOuter
-		<< ')' << " ...";
+	reshade::log::message(
+		reshade::log::level::info,
+		"Redirecting DirectInputCreateEx(hinst = %p, dwVersion = %x, riidltf = %s, ppvOut = %p, punkOuter = %p) ...",
+		hinst, dwVersion, reshade::log::iid_to_string(riidltf).c_str(), ppvOut, punkOuter);
 
 	const HRESULT hr = reshade::hooks::call(DirectInputCreateEx)(hinst, dwVersion, riidltf, ppvOut, punkOuter);
 	if (FAILED(hr))
 	{
-		LOG(WARN) << "DirectInputCreateEx" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "DirectInputCreateEx failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 		return hr;
 	}
 

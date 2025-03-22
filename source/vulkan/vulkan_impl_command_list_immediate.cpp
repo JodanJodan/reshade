@@ -9,6 +9,8 @@
 
 #define vk _device_impl->_dispatch_table
 
+thread_local reshade::vulkan::command_list_immediate_impl *reshade::vulkan::command_list_immediate_impl::s_last_immediate_command_list = nullptr;
+
 reshade::vulkan::command_list_immediate_impl::command_list_immediate_impl(device_impl *device, uint32_t queue_family_index, VkQueue queue) :
 	command_list_impl(device, VK_NULL_HANDLE),
 	_parent_queue(queue)
@@ -69,9 +71,14 @@ reshade::vulkan::command_list_immediate_impl::command_list_immediate_impl(device
 
 	// Command buffer is now in the recording state
 	_orig = _cmd_buffers[_cmd_index];
+
+	s_last_immediate_command_list = this;
 }
 reshade::vulkan::command_list_immediate_impl::~command_list_immediate_impl()
 {
+	if (this == s_last_immediate_command_list)
+		s_last_immediate_command_list = nullptr;
+
 	for (VkFence fence : _cmd_fences)
 		vk.DestroyFence(_device_impl->_orig, fence, nullptr);
 	for (VkSemaphore semaphore : _cmd_semaphores)
@@ -86,6 +93,8 @@ reshade::vulkan::command_list_immediate_impl::~command_list_immediate_impl()
 
 bool reshade::vulkan::command_list_immediate_impl::flush(VkSubmitInfo &submit_info)
 {
+	s_last_immediate_command_list = this;
+
 	if (!_has_commands)
 		return true;
 	_has_commands = false;
@@ -98,7 +107,7 @@ bool reshade::vulkan::command_list_immediate_impl::flush(VkSubmitInfo &submit_in
 	// Submit all asynchronous commands in one batch to the current queue
 	if (vk.EndCommandBuffer(_orig) != VK_SUCCESS)
 	{
-		LOG(ERROR) << "Failed to close immediate command list!";
+		log::message(log::level::error, "Failed to close immediate command list!");
 
 		// Have to reset the command buffer when closing it was unsuccessful
 		vk.BeginCommandBuffer(_orig, &begin_info);
@@ -120,7 +129,7 @@ bool reshade::vulkan::command_list_immediate_impl::flush(VkSubmitInfo &submit_in
 
 	if (vk.QueueSubmit(_parent_queue, 1, &submit_info, _cmd_fences[_cmd_index]) != VK_SUCCESS)
 	{
-		LOG(ERROR) << "Failed to submit immediate command list!";
+		log::message(log::level::error, "Failed to submit immediate command list!");
 
 		// Have to reset the command buffer when submitting it was unsuccessful
 		vk.BeginCommandBuffer(_orig, &begin_info);

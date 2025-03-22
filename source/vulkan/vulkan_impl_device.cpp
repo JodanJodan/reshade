@@ -67,6 +67,7 @@ reshade::vulkan::device_impl::device_impl(
 		functions.vkGetDeviceBufferMemoryRequirements = device_table.GetDeviceBufferMemoryRequirements;
 		functions.vkGetDeviceImageMemoryRequirements = device_table.GetDeviceImageMemoryRequirements;
 #endif
+		functions.vkGetMemoryWin32HandleKHR = device_table.GetMemoryWin32HandleKHR;
 
 		VmaAllocatorCreateInfo create_info = {};
 		create_info.physicalDevice = physical_device;
@@ -78,6 +79,8 @@ reshade::vulkan::device_impl::device_impl(
 
 		if (ray_tracing_ext)
 			create_info.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+		if (vk.GetMemoryWin32HandleKHR != nullptr)
+			create_info.flags |= VMA_ALLOCATOR_CREATE_KHR_EXTERNAL_MEMORY_WIN32_BIT;
 
 		vmaCreateAllocator(&create_info, &_alloc);
 	}
@@ -98,7 +101,7 @@ reshade::vulkan::device_impl::device_impl(
 
 		if (vk.CreateDescriptorPool(_orig, &create_info, nullptr, &_descriptor_pool) != VK_SUCCESS)
 		{
-			LOG(ERROR) << "Failed to create descriptor pool!";
+			log::message(log::level::error, "Failed to create descriptor pool!");
 		}
 	}
 
@@ -113,7 +116,7 @@ reshade::vulkan::device_impl::device_impl(
 
 			if (vk.CreateDescriptorPool(_orig, &create_info, nullptr, &_transient_descriptor_pool[i]) != VK_SUCCESS)
 			{
-				LOG(ERROR) << "Failed to create transient descriptor pool!";
+				log::message(log::level::error, "Failed to create transient descriptor pool!");
 			}
 		}
 	}
@@ -122,7 +125,7 @@ reshade::vulkan::device_impl::device_impl(
 
 		if (vk.CreatePrivateDataSlot(_orig, &create_info, nullptr, &_private_data_slot) != VK_SUCCESS)
 		{
-			LOG(ERROR) << "Failed to create private data slot!";
+			log::message(log::level::error, "Failed to create private data slot!");
 		}
 	}
 }
@@ -350,6 +353,7 @@ bool reshade::vulkan::device_impl::create_resource(const api::resource_desc &des
 	assert((desc.usage & initial_state) == initial_state || initial_state == api::resource_usage::general || initial_state == api::resource_usage::cpu_access);
 
 	VmaAllocation allocation = VMA_NULL;
+	VmaAllocationInfo allocation_info = {};
 	VmaAllocationCreateInfo alloc_info = {};
 	switch (desc.heap)
 	{
@@ -385,6 +389,9 @@ bool reshade::vulkan::device_impl::create_resource(const api::resource_desc &des
 	{
 		if (shared_handle == nullptr)
 			return false;
+
+		// Make all imported/exported allocations dedicated so that memory offset is zero
+		alloc_info.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 
 		if ((desc.flags & api::resource_flags::shared_nt_handle) != 0)
 			handle_type = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
@@ -426,56 +433,43 @@ bool reshade::vulkan::device_impl::create_resource(const api::resource_desc &des
 				external_memory_info = { VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO };
 				external_memory_info.handleTypes = handle_type;
 				create_info.pNext = &external_memory_info;
+
+				// Create a pool to source the dedicated allocation from
+				VmaPoolCreateInfo pool_info = {};
+				vmaFindMemoryTypeIndexForBufferInfo(_alloc, &create_info, &alloc_info, &pool_info.memoryTypeIndex);
+				pool_info.pMemoryAllocateNext = &import_export_info;
+
+				if (vmaCreatePool(_alloc, &pool_info, &alloc_info.pool) != VK_SUCCESS)
+					break;
 			}
 
 			if (VkBuffer object = VK_NULL_HANDLE;
-				(desc.heap == api::memory_heap::unknown || is_shared ?
-					 vk.CreateBuffer(_orig, &create_info, nullptr, &object) :
-					 vmaCreateBuffer(_alloc, &create_info, &alloc_info, &object, &allocation, nullptr)) == VK_SUCCESS)
+				(desc.heap == api::memory_heap::unknown ?
+					vk.CreateBuffer(_orig, &create_info, _alloc->GetAllocationCallbacks(), &object) :
+					vmaCreateBuffer(_alloc, &create_info, &alloc_info, &object, &allocation, &allocation_info)) == VK_SUCCESS)
 			{
-				object_data<VK_OBJECT_TYPE_BUFFER> data;
-				data.allocation = allocation;
-				data.create_info = create_info;
-				data.create_info.pNext = nullptr; // Clear out structure chain pointer, since it becomes invalid once leaving the current scope
-
-				if (is_shared)
+				if (allocation != VMA_NULL && is_shared && *shared_handle == nullptr)
 				{
-					VkMemoryRequirements reqs = {};
-					vk.GetBufferMemoryRequirements(_orig, object, &reqs);
+					assert(allocation_info.offset == 0);
 
-					VkMemoryAllocateInfo mem_alloc_info { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &import_export_info };
-					mem_alloc_info.allocationSize = reqs.size;
-					vmaFindMemoryTypeIndex(_alloc, reqs.memoryTypeBits, &alloc_info, &mem_alloc_info.memoryTypeIndex);
+					VkMemoryGetWin32HandleInfoKHR handle_info { VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR };
+					handle_info.memory = allocation_info.deviceMemory;
+					handle_info.handleType = handle_type;
 
-					if (vk.AllocateMemory(_orig, &mem_alloc_info, nullptr, &data.memory) != VK_SUCCESS)
+					if (vk.GetMemoryWin32HandleKHR(_orig, &handle_info, shared_handle) != VK_SUCCESS)
 					{
-						vk.DestroyBuffer(_orig, object, nullptr);
+						vmaDestroyBuffer(_alloc, object, allocation);
 						break;
 					}
-
-					vk.BindBufferMemory(_orig, object, data.memory, data.memory_offset);
-
-					if (*shared_handle == nullptr)
-					{
-						VkMemoryGetWin32HandleInfoKHR handle_info { VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR };
-						handle_info.memory = data.memory;
-						handle_info.handleType = handle_type;
-
-						if (vk.GetMemoryWin32HandleKHR(_orig, &handle_info, shared_handle) != VK_SUCCESS)
-						{
-							vk.DestroyBuffer(_orig, object, nullptr);
-							vk.FreeMemory(_orig, data.memory, nullptr);
-							break;
-						}
-					}
 				}
-				else if (allocation != VMA_NULL)
-				{
-					VmaAllocationInfo allocation_info;
-					vmaGetAllocationInfo(_alloc, allocation, &allocation_info);
-					data.memory = allocation_info.deviceMemory;
-					data.memory_offset = allocation_info.offset;
-				}
+
+				object_data<VK_OBJECT_TYPE_BUFFER> data;
+				data.allocation = allocation;
+				data.pool = alloc_info.pool;
+				data.memory = allocation_info.deviceMemory;
+				data.memory_offset = allocation_info.offset;
+				data.create_info = create_info;
+				data.create_info.pNext = nullptr; // Clear out structure chain pointer, since it becomes invalid once leaving the current scope
 
 				register_object<VK_OBJECT_TYPE_BUFFER>(object, std::move(data));
 
@@ -483,7 +477,7 @@ bool reshade::vulkan::device_impl::create_resource(const api::resource_desc &des
 
 				if (initial_data != nullptr)
 				{
-					if (get_first_immediate_command_list())
+					if (get_immediate_command_list())
 					{
 						update_buffer_region(initial_data->data, *out_resource, 0, desc.buffer.size);
 					}
@@ -492,7 +486,7 @@ bool reshade::vulkan::device_impl::create_resource(const api::resource_desc &des
 						// Cannot upload initial data without a command list
 						destroy_resource(*out_resource);
 						*out_resource = { 0 };
-						break;
+						return false;
 					}
 				}
 				return true;
@@ -511,7 +505,7 @@ bool reshade::vulkan::device_impl::create_resource(const api::resource_desc &des
 				create_info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 			// Default view creation for resolving requires image to have a usage usable for view creation
 			if (desc.heap != api::memory_heap::unknown && !is_shared && (desc.usage & (api::resource_usage::resolve_source | api::resource_usage::resolve_dest)) != 0)
-				create_info.usage |= aspect_flags_from_format(create_info.format) & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+				create_info.usage |= (aspect_flags_from_format(create_info.format) & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) != 0 ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 			// Mapping images is only really useful with linear tiling
 			if (desc.heap == api::memory_heap::gpu_to_cpu || desc.heap == api::memory_heap::cpu_only)
 				create_info.tiling = VK_IMAGE_TILING_LINEAR;
@@ -521,73 +515,59 @@ bool reshade::vulkan::device_impl::create_resource(const api::resource_desc &des
 			{
 				external_memory_info = { VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO };
 				external_memory_info.handleTypes = handle_type;
-
 				create_info.pNext = &external_memory_info;
+
+				// Create a pool to source the dedicated allocation from
+				VmaPoolCreateInfo pool_info = {};
+				vmaFindMemoryTypeIndexForImageInfo(_alloc, &create_info, &alloc_info, &pool_info.memoryTypeIndex);
+				pool_info.pMemoryAllocateNext = &import_export_info;
+
+				if (vmaCreatePool(_alloc, &pool_info, &alloc_info.pool) != VK_SUCCESS)
+					break;
 			}
 
 			if (VkImage object = VK_NULL_HANDLE;
-				(desc.heap == api::memory_heap::unknown || is_shared ?
-					 vk.CreateImage(_orig, &create_info, nullptr, &object) :
-					 vmaCreateImage(_alloc, &create_info, &alloc_info, &object, &allocation, nullptr)) == VK_SUCCESS)
+				(desc.heap == api::memory_heap::unknown ?
+					vk.CreateImage(_orig, &create_info, _alloc->GetAllocationCallbacks(), &object) :
+					vmaCreateImage(_alloc, &create_info, &alloc_info, &object, &allocation, &allocation_info)) == VK_SUCCESS)
 			{
+				if (allocation != VMA_NULL && is_shared && *shared_handle == nullptr)
+				{
+					assert(allocation_info.offset == 0);
+
+					VkMemoryGetWin32HandleInfoKHR handle_info { VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR };
+					handle_info.memory = allocation_info.deviceMemory;
+					handle_info.handleType = handle_type;
+
+					if (vk.GetMemoryWin32HandleKHR(_orig, &handle_info, shared_handle) != VK_SUCCESS)
+					{
+						vmaDestroyImage(_alloc, object, allocation);
+						break;
+					}
+				}
+
 				object_data<VK_OBJECT_TYPE_IMAGE> data;
 				data.allocation = allocation;
+				data.pool = alloc_info.pool;
+				data.memory = allocation_info.deviceMemory;
+				data.memory_offset = allocation_info.offset;
 				data.create_info = create_info;
 				data.create_info.pNext = nullptr; // Clear out structure chain pointer, since it becomes invalid once leaving the current scope
 
-				if (is_shared)
+				// Need to create a default view that is used in 'command_list_impl::resolve_texture_region'
+				if ((desc.usage & (api::resource_usage::resolve_source | api::resource_usage::resolve_dest)) != 0)
 				{
-					VkMemoryRequirements reqs = {};
-					vk.GetImageMemoryRequirements(_orig, object, &reqs);
+					VkImageViewCreateInfo default_view_info { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+					default_view_info.image = object;
+					default_view_info.viewType = static_cast<VkImageViewType>(create_info.imageType); // Map 'VK_IMAGE_TYPE_1D' to VK_IMAGE_VIEW_TYPE_1D' and so on
+					default_view_info.format = create_info.format;
+					default_view_info.subresourceRange.aspectMask = aspect_flags_from_format(create_info.format);
+					default_view_info.subresourceRange.baseMipLevel = 0;
+					default_view_info.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
+					default_view_info.subresourceRange.baseArrayLayer = 0;
+					default_view_info.subresourceRange.layerCount = 1; // Non-array image view types can only contain a single layer
 
-					VkMemoryAllocateInfo mem_alloc_info { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &import_export_info };
-					mem_alloc_info.allocationSize = reqs.size;
-					vmaFindMemoryTypeIndex(_alloc, reqs.memoryTypeBits, &alloc_info, &mem_alloc_info.memoryTypeIndex);
-
-					if (vk.AllocateMemory(_orig, &mem_alloc_info, nullptr, &data.memory) != VK_SUCCESS)
-					{
-						vk.DestroyImage(_orig, object, nullptr);
-						break;
-					}
-
-					vk.BindImageMemory(_orig, object, data.memory, data.memory_offset);
-
-					if (*shared_handle == nullptr)
-					{
-						VkMemoryGetWin32HandleInfoKHR handle_info { VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR };
-						handle_info.memory = data.memory;
-						handle_info.handleType = handle_type;
-
-						if (vk.GetMemoryWin32HandleKHR(_orig, &handle_info, shared_handle) != VK_SUCCESS)
-						{
-							vk.DestroyImage(_orig, object, nullptr);
-							vk.FreeMemory(_orig, data.memory, nullptr);
-							break;
-						}
-					}
-				}
-				else if (allocation != VMA_NULL)
-				{
-					VmaAllocationInfo allocation_info;
-					vmaGetAllocationInfo(_alloc, allocation, &allocation_info);
-					data.memory = allocation_info.deviceMemory;
-					data.memory_offset = allocation_info.offset;
-
-					// Need to create a default view that is used in 'command_list_impl::resolve_texture_region'
-					if ((desc.usage & (api::resource_usage::resolve_source | api::resource_usage::resolve_dest)) != 0)
-					{
-						VkImageViewCreateInfo default_view_info { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
-						default_view_info.image = object;
-						default_view_info.viewType = static_cast<VkImageViewType>(create_info.imageType); // Map 'VK_IMAGE_TYPE_1D' to VK_IMAGE_VIEW_TYPE_1D' and so on
-						default_view_info.format = create_info.format;
-						default_view_info.subresourceRange.aspectMask = aspect_flags_from_format(create_info.format);
-						default_view_info.subresourceRange.baseMipLevel = 0;
-						default_view_info.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
-						default_view_info.subresourceRange.baseArrayLayer = 0;
-						default_view_info.subresourceRange.layerCount = 1; // Non-array image view types can only contain a single layer
-
-						vk.CreateImageView(_orig, &default_view_info, nullptr, &data.default_view);
-					}
+					vk.CreateImageView(_orig, &default_view_info, nullptr, &data.default_view);
 				}
 
 				register_object<VK_OBJECT_TYPE_IMAGE>(object, std::move(data));
@@ -600,7 +580,7 @@ bool reshade::vulkan::device_impl::create_resource(const api::resource_desc &des
 				if (initial_state != api::resource_usage::undefined)
 				{
 					// Transition resource into the initial state using the first available immediate command list
-					if (const auto immediate_command_list = get_first_immediate_command_list())
+					if (const auto immediate_command_list = get_immediate_command_list())
 					{
 						if (initial_data != nullptr)
 						{
@@ -628,7 +608,7 @@ bool reshade::vulkan::device_impl::create_resource(const api::resource_desc &des
 						// Cannot upload initial data without a command list
 						destroy_resource(*out_resource);
 						*out_resource = { 0 };
-						break;
+						return false;
 					}
 				}
 				return true;
@@ -636,6 +616,8 @@ bool reshade::vulkan::device_impl::create_resource(const api::resource_desc &des
 			break;
 		}
 	}
+
+	vmaDestroyPool(_alloc, alloc_info.pool);
 
 	return false;
 }
@@ -646,46 +628,34 @@ void reshade::vulkan::device_impl::destroy_resource(api::resource resource)
 
 	static_assert(
 		offsetof(object_data<VK_OBJECT_TYPE_IMAGE>, allocation ) == offsetof(object_data<VK_OBJECT_TYPE_BUFFER>, allocation ) &&
+		offsetof(object_data<VK_OBJECT_TYPE_IMAGE>, pool       ) == offsetof(object_data<VK_OBJECT_TYPE_BUFFER>, pool       ) &&
 		offsetof(object_data<VK_OBJECT_TYPE_IMAGE>, create_info) == offsetof(object_data<VK_OBJECT_TYPE_BUFFER>, create_info));
 
 	const auto data = get_private_data_for_object<VK_OBJECT_TYPE_IMAGE>((VkImage)resource.handle);
 	if (data->create_info.sType == VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO) // Structure type is at the same offset in both image and buffer object data structures
 	{
 		const VmaAllocation allocation = data->allocation;
-		const VkDeviceMemory memory = data->memory;
+		const VmaPool pool = data->pool;
 		const VkImageView default_view = data->default_view;
 
 		// Warning, the 'data' pointer must not be accessed after this call, since it frees that memory!
 		unregister_object<VK_OBJECT_TYPE_IMAGE>((VkImage)resource.handle);
 
-		if (allocation == VMA_NULL)
-		{
-			vk.DestroyImageView(_orig, default_view, nullptr);
-			vk.DestroyImage(_orig, (VkImage)resource.handle, nullptr);
-			vk.FreeMemory(_orig, memory, nullptr);
-		}
-		else
-		{
-			vmaDestroyImage(_alloc, (VkImage)resource.handle, allocation);
-		}
+		vk.DestroyImageView(_orig, default_view, nullptr);
+
+		vmaDestroyImage(_alloc, (VkImage)resource.handle, allocation);
+		vmaDestroyPool(_alloc, pool);
 	}
 	else
 	{
 		const VmaAllocation allocation = data->allocation;
-		const VkDeviceMemory memory = data->memory;
+		const VmaPool pool = data->pool;
 
 		// Warning, the 'data' pointer must not be accessed after this call, since it frees that memory!
 		unregister_object<VK_OBJECT_TYPE_BUFFER>((VkBuffer)resource.handle);
 
-		if (allocation == VMA_NULL)
-		{
-			vk.DestroyBuffer(_orig, (VkBuffer)resource.handle, nullptr);
-			vk.FreeMemory(_orig, memory, nullptr);
-		}
-		else
-		{
-			vmaDestroyBuffer(_alloc, (VkBuffer)resource.handle, allocation);
-		}
+		vmaDestroyBuffer(_alloc, (VkBuffer)resource.handle, allocation);
+		vmaDestroyPool(_alloc, pool);
 	}
 }
 
@@ -1005,9 +975,11 @@ void reshade::vulkan::device_impl::unmap_texture_region(api::resource resource, 
 void reshade::vulkan::device_impl::update_buffer_region(const void *data, api::resource resource, uint64_t offset, uint64_t size)
 {
 	assert(resource != 0);
-	assert(data != nullptr);
 
-	if (const auto immediate_command_list = get_first_immediate_command_list())
+	if (data == nullptr)
+		return;
+
+	if (const auto immediate_command_list = get_immediate_command_list())
 	{
 		immediate_command_list->_has_commands = true;
 
@@ -1019,7 +991,13 @@ void reshade::vulkan::device_impl::update_buffer_region(const void *data, api::r
 void reshade::vulkan::device_impl::update_texture_region(const api::subresource_data &data, api::resource resource, uint32_t subresource, const api::subresource_box *box)
 {
 	assert(resource != 0);
-	assert(data.data != nullptr);
+
+	if (data.data == nullptr)
+		return;
+
+	const auto immediate_command_list = get_immediate_command_list();
+	if (immediate_command_list == nullptr)
+		return; // No point in creating upload buffer when it cannot be uploaded
 
 	const auto resource_data = get_private_data_for_object<VK_OBJECT_TYPE_IMAGE>((VkImage)resource.handle);
 
@@ -1050,7 +1028,7 @@ void reshade::vulkan::device_impl::update_texture_region(const api::subresource_
 
 		if (vmaCreateBuffer(_alloc, &create_info, &alloc_info, &intermediate, &intermediate_mem, nullptr) != VK_SUCCESS)
 		{
-			LOG(ERROR) << "Failed to create upload buffer (width = " << create_info.size << ")!";
+			log::message(log::level::error, "Failed to create upload buffer (width = %llu)!", create_info.size);
 			return;
 		}
 	}
@@ -1076,13 +1054,10 @@ void reshade::vulkan::device_impl::update_texture_region(const api::subresource_
 		vmaUnmapMemory(_alloc, intermediate_mem);
 
 		// Copy data from upload buffer into target texture using the first available immediate command list
-		if (const auto immediate_command_list = get_first_immediate_command_list())
-		{
-			immediate_command_list->copy_buffer_to_texture({ (uint64_t)intermediate }, 0, 0, 0, resource, subresource, box);
+		immediate_command_list->copy_buffer_to_texture({ (uint64_t)intermediate }, 0, 0, 0, resource, subresource, box);
 
-			// Wait for command to finish executing before destroying the upload buffer
-			immediate_command_list->flush_and_wait();
-		}
+		// Wait for command to finish executing before destroying the upload buffer
+		immediate_command_list->flush_and_wait();
 	}
 
 	vmaDestroyBuffer(_alloc, intermediate, intermediate_mem);
@@ -2164,7 +2139,7 @@ bool reshade::vulkan::device_impl::create_query_heap(api::query_type type, uint3
 
 		// Reset all queries for initial use
 #if 1
-		if (const auto immediate_command_list = get_first_immediate_command_list())
+		if (const auto immediate_command_list = get_immediate_command_list())
 		{
 			vk.CmdResetQueryPool(immediate_command_list->_orig, pool, 0, count);
 
@@ -2402,10 +2377,15 @@ void reshade::vulkan::device_impl::advance_transient_descriptor_pool()
 	vk.ResetDescriptorPool(_orig, next_pool, 0);
 }
 
-reshade::vulkan::command_list_immediate_impl *reshade::vulkan::device_impl::get_first_immediate_command_list()
+reshade::vulkan::command_list_immediate_impl *reshade::vulkan::device_impl::get_immediate_command_list()
 {
+	// Choosing the right queue is a delicate situation, since it is possible to deadlock when choosing a queue (and using 'flush_and_wait') that is waiting on a fence yet to be signaled by the current thread
+	// Prefer the last immediate command list used on this thread, as that is less likely to wait on another thread to signal
+	const auto last_immediate_command_list = command_list_immediate_impl::s_last_immediate_command_list;
+	if (last_immediate_command_list != nullptr && last_immediate_command_list->get_device() == this)
+		return last_immediate_command_list;
+	// Otherwise fall back to the first immediate command list created
 	assert(!_queues.empty());
-
 	for (command_queue_impl *const queue : _queues)
 		if (const auto immediate_command_list = static_cast<command_list_immediate_impl *>(queue->get_immediate_command_list()))
 			return immediate_command_list;

@@ -31,10 +31,9 @@ namespace reshade
 		unknown
 	};
 
-#if RESHADE_FX
-	struct texture final : reshadefx::texture_info
+	struct texture : reshadefx::texture
 	{
-		texture(const reshadefx::texture_info &init) : texture_info(init) {}
+		texture(const reshadefx::texture &init) : reshadefx::texture(init) {}
 
 		auto annotation_as_int(const std::string_view ann_name, size_t i = 0, int default_value = 0) const
 		{
@@ -64,7 +63,7 @@ namespace reshade
 			return it != annotations.cend() ? std::string_view(it->value.string_data) : default_value;
 		}
 
-		bool matches_description(const reshadefx::texture_info &desc) const
+		bool matches_description(const reshadefx::texture &desc) const
 		{
 			return type == desc.type && width == desc.width && height == desc.height && levels == desc.levels && format == desc.format;
 		}
@@ -80,9 +79,9 @@ namespace reshade
 		std::vector<api::resource_view> uav;
 	};
 
-	struct uniform final : reshadefx::uniform_info
+	struct uniform : reshadefx::uniform
 	{
-		uniform(const reshadefx::uniform_info &init) : uniform_info(init) {}
+		uniform(const reshadefx::uniform &init) : reshadefx::uniform(init) {}
 
 		auto annotation_as_int(const std::string_view ann_name, size_t i = 0, int default_value = 0) const
 		{
@@ -129,9 +128,20 @@ namespace reshade
 		special_uniform special = special_uniform::none;
 	};
 
-	struct technique final : reshadefx::technique_info
+	struct technique
 	{
-		technique(const reshadefx::technique_info &init) : technique_info(init) {}
+		technique(const reshadefx::technique &init) :
+			name(init.name),
+			annotations(init.annotations),
+			permutations(1)
+		{
+			permutations.front().passes.assign(init.passes.begin(), init.passes.end());
+		}
+
+		std::string name;
+		size_t effect_index = std::numeric_limits<size_t>::max();
+
+		std::vector<reshadefx::annotation> annotations;
 
 		auto annotation_as_int(const std::string_view ann_name, size_t i = 0, int default_value = 0) const
 		{
@@ -162,7 +172,6 @@ namespace reshade
 				std::string_view(it->value.string_data) : default_value;
 		}
 
-		size_t effect_index = std::numeric_limits<size_t>::max();
 		unsigned int toggle_key_data[4] = {};
 
 		bool hidden = false;
@@ -170,8 +179,10 @@ namespace reshade
 		bool enabled_in_screenshot = true;
 		int64_t time_left = 0;
 
-		struct pass_data
+		struct pass : reshadefx::pass
 		{
+			pass(const reshadefx::pass &init) : reshadefx::pass(init) {}
+
 			api::resource_view render_target_views[8] = {};
 			api::pipeline pipeline = {};
 			api::descriptor_table texture_table = {};
@@ -180,7 +191,14 @@ namespace reshade
 			std::vector<api::resource_view> generate_mipmap_views;
 		};
 
-		std::vector<pass_data> passes_data;
+		struct permutation
+		{
+			std::vector<pass> passes;
+			bool created = false;
+		};
+
+		std::vector<permutation> permutations;
+
 		uint32_t query_base_index = 0;
 		moving_average<uint64_t, 60> average_cpu_duration;
 		moving_average<uint64_t, 60> average_gpu_duration;
@@ -188,31 +206,24 @@ namespace reshade
 
 	struct effect
 	{
+		std::filesystem::path source_file;
+		size_t source_hash = 0;
+		bool addon = false;
+
 		unsigned int rendering = 0;
 		bool skipped = false;
 		bool compiled = false;
 		bool preprocessed = false;
 		std::string errors;
 
-		reshadefx::effect_module module;
-		size_t source_hash = 0;
-		std::filesystem::path source_file;
 		std::vector<std::filesystem::path> included_files;
 		std::vector<std::pair<std::string, std::string>> definitions;
-		std::unordered_map<std::string, std::string> assembly;
-		std::unordered_map<std::string, std::string> assembly_text;
 
 		std::vector<uniform> uniforms;
 		std::vector<uint8_t> uniform_data_storage;
-
-		api::query_heap query_heap = {};
 		api::resource cb = {};
-		api::pipeline_layout layout = {};
 
-		api::descriptor_table cb_table = {};
-		api::descriptor_table sampler_table = {};
-
-		struct binding_data
+		struct binding
 		{
 			std::string semantic;
 			api::descriptor_table table;
@@ -220,7 +231,23 @@ namespace reshade
 			api::sampler sampler;
 			bool srgb;
 		};
-		std::vector<binding_data> texture_semantic_to_binding;
+
+		struct permutation
+		{
+			reshadefx::effect_module module;
+			std::string generated_code;
+			std::unordered_map<std::string, std::string> assembly;
+			std::unordered_map<std::string, std::string> assembly_text;
+
+			api::pipeline_layout layout = {};
+			api::descriptor_table cb_table = {};
+			api::descriptor_table sampler_table = {};
+
+			std::vector<binding> texture_semantic_to_binding;
+		};
+
+		std::vector<permutation> permutations;
+
+		api::query_heap query_heap = {};
 	};
-#endif
 }

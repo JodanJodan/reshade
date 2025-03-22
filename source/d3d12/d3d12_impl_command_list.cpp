@@ -10,8 +10,7 @@
 #include <cstring> // std::strlen, std::strncpy
 #include <algorithm> // std::copy_n, std::fill, std::max, std::min
 
-// IID_ID3D12GraphicsCommandListExt
-static constexpr GUID s_command_list_ex_guid = { 0x77a86b09, 0x2bea, 0x4801, { 0xb8, 0x9a, 0x37, 0x64, 0x8e, 0x10, 0x4a, 0xf1 } };
+constexpr GUID IID_ID3D12GraphicsCommandListExt = { 0x77a86b09, 0x2bea, 0x4801, { 0xb8, 0x9a, 0x37, 0x64, 0x8e, 0x10, 0x4a, 0xf1 } };
 
 void encode_pix3blob(UINT64(&pix3blob)[64], const char *label, const float color[4])
 {
@@ -44,7 +43,7 @@ void reshade::d3d12::command_list_impl::on_init()
 
 		// VKD3D does not implement 'ID3D12GraphicsCommandList4::BeginRenderPass' despite anouncing support for the 'ID3D12GraphicsCommandList4' interface as of VKD3D v2.6
 		// This means we cannot use the 'BeginRenderPass' code path if we are running VKD3D, which next line tries to detect by querying for 'IID_ID3D12GraphicsCommandListExt' support
-		if (_orig->QueryInterface(s_command_list_ex_guid, reinterpret_cast<void **>(&cmd_list_ex)) != S_OK)
+		if (_orig->QueryInterface(IID_ID3D12GraphicsCommandListExt, reinterpret_cast<void **>(&cmd_list_ex)) != S_OK)
 			_supports_render_passes = true;
 	}
 }
@@ -421,7 +420,7 @@ void reshade::d3d12::command_list_impl::push_descriptors(api::shader_stage stage
 		!_device_impl->_gpu_view_heap.allocate_transient(update.binding + update.count, base_handle, base_handle_gpu) :
 		!_device_impl->_gpu_sampler_heap.allocate_transient(update.binding + update.count, base_handle, base_handle_gpu))
 	{
-		LOG(ERROR) << "Failed to allocate " << update.count << " transient descriptor handle(s) of type " << static_cast<uint32_t>(update.type) << '!';
+		log::message(log::level::error, "Failed to allocate %u transient descriptor handle(s) of type %u!", update.count, static_cast<uint32_t>(update.type));
 		return;
 	}
 
@@ -454,7 +453,6 @@ void reshade::d3d12::command_list_impl::push_descriptors(api::shader_stage stage
 		temp_mem<D3D12_CPU_DESCRIPTOR_HANDLE> src_handles(update.count);
 		for (uint32_t k = 0; k < update.count; ++k)
 			src_handles[k] = { static_cast<SIZE_T>(static_cast<const uint64_t *>(update.descriptors)[k]) };
-		const UINT src_range_size = 1;
 
 		_device_impl->_orig->CopyDescriptors(1, &base_handle, &update.count, update.count, src_handles.p, src_range_sizes.p, convert_descriptor_type_to_heap_type(update.type));
 #else
@@ -702,6 +700,14 @@ void reshade::d3d12::command_list_impl::copy_resource(api::resource src, api::re
 
 	assert(src != 0 && dst != 0);
 
+	UINT extra_data_size = sizeof(D3D12_SUBRESOURCE_FOOTPRINT);
+	if (SUCCEEDED(reinterpret_cast<ID3D12Resource *>(src.handle)->GetPrivateData(extra_data_guid, &extra_data_size, nullptr)) ||
+		SUCCEEDED(reinterpret_cast<ID3D12Resource *>(dst.handle)->GetPrivateData(extra_data_guid, &extra_data_size, nullptr)))
+	{
+		copy_texture_region(src, 0, nullptr, dst, 0, nullptr, api::filter_mode::min_mag_mip_point);
+		return;
+	}
+
 	_orig->CopyResource(reinterpret_cast<ID3D12Resource *>(dst.handle), reinterpret_cast<ID3D12Resource *>(src.handle));
 }
 void reshade::d3d12::command_list_impl::copy_buffer_region(api::resource src, uint64_t src_offset, api::resource dst, uint64_t dst_offset, uint64_t size)
@@ -840,7 +846,7 @@ void reshade::d3d12::command_list_impl::copy_texture_to_buffer(api::resource src
 		&dst_copy_location, 0, 0, 0,
 		&src_copy_location, reinterpret_cast<const D3D12_BOX *>(src_box));
 }
-void reshade::d3d12::command_list_impl::resolve_texture_region(api::resource src, uint32_t src_subresource, const api::subresource_box *src_box, api::resource dst, uint32_t dst_subresource, int32_t dst_x, int32_t dst_y, int32_t dst_z, api::format format)
+void reshade::d3d12::command_list_impl::resolve_texture_region(api::resource src, uint32_t src_subresource, const api::subresource_box *src_box, api::resource dst, uint32_t dst_subresource, uint32_t dst_x, uint32_t dst_y, uint32_t dst_z, api::format format)
 {
 	_has_commands = true;
 
@@ -948,7 +954,7 @@ void reshade::d3d12::command_list_impl::clear_unordered_access_view_uint(api::re
 	D3D12_GPU_DESCRIPTOR_HANDLE table_base_gpu;
 	if (!_device_impl->_gpu_view_heap.allocate_transient(1, table_base, table_base_gpu))
 	{
-		LOG(ERROR) << "Failed to allocate " << 1 << " transient descriptor handle(s) of type " << static_cast<uint32_t>(api::descriptor_type::unordered_access_view) << '!';
+		log::message(log::level::error, "Failed to allocate %u transient descriptor handle(s) of type %u!", 1u, static_cast<uint32_t>(api::descriptor_type::unordered_access_view));
 		return;
 	}
 
@@ -976,7 +982,7 @@ void reshade::d3d12::command_list_impl::clear_unordered_access_view_float(api::r
 	D3D12_GPU_DESCRIPTOR_HANDLE table_base_gpu;
 	if (!_device_impl->_gpu_view_heap.allocate_transient(1, table_base, table_base_gpu))
 	{
-		LOG(ERROR) << "Failed to allocate " << 1 << " transient descriptor handle(s) of type " << static_cast<uint32_t>(api::descriptor_type::unordered_access_view) << '!';
+		log::message(log::level::error, "Failed to allocate %u transient descriptor handle(s) of type %u!", 1u, static_cast<uint32_t>(api::descriptor_type::unordered_access_view));
 		return;
 	}
 
@@ -1018,7 +1024,7 @@ void reshade::d3d12::command_list_impl::generate_mipmaps(api::resource_view srv)
 	D3D12_GPU_DESCRIPTOR_HANDLE base_handle_gpu;
 	if (!_device_impl->_gpu_view_heap.allocate_transient(level_count_multiple_of_6, base_handle, base_handle_gpu))
 	{
-		LOG(ERROR) << "Failed to allocate " << level_count_multiple_of_6 << " transient descriptor handle(s) of type " << static_cast<uint32_t>(api::descriptor_type::unordered_access_view) << '!';
+		log::message(log::level::error, "Failed to allocate %u transient descriptor handle(s) of type %u!", level_count_multiple_of_6, static_cast<uint32_t>(api::descriptor_type::unordered_access_view));
 		return;
 	}
 
@@ -1055,9 +1061,9 @@ void reshade::d3d12::command_list_impl::generate_mipmaps(api::resource_view srv)
 	D3D12_RESOURCE_BARRIER barriers[2];
 	barriers[0] = { D3D12_RESOURCE_BARRIER_TYPE_TRANSITION };
 	barriers[0].Transition.pResource = reinterpret_cast<ID3D12Resource *>(resource.handle);
+	barriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 	barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 	barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-	barriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 	barriers[1] = { D3D12_RESOURCE_BARRIER_TYPE_UAV };
 	barriers[1].UAV.pResource = reinterpret_cast<ID3D12Resource *>(resource.handle);
 	_orig->ResourceBarrier(1, &barriers[0]);
@@ -1109,9 +1115,24 @@ void reshade::d3d12::command_list_impl::copy_query_heap_results(api::query_heap 
 	_has_commands = true;
 
 	assert(heap != 0);
-	assert(stride == sizeof(uint64_t));
 
-	_orig->ResolveQueryData(reinterpret_cast<ID3D12QueryHeap *>(heap.handle), convert_query_type(type), first, count, reinterpret_cast<ID3D12Resource *>(dst.handle), dst_offset);
+	if (com_ptr<ID3D12QueryHeap> heap_object;
+		SUCCEEDED(reinterpret_cast<IUnknown *>(heap.handle)->QueryInterface(&heap_object)))
+	{
+		assert(stride == sizeof(uint64_t));
+
+		_orig->ResolveQueryData(reinterpret_cast<ID3D12QueryHeap *>(heap.handle), convert_query_type(type), first, count, reinterpret_cast<ID3D12Resource *>(dst.handle), dst_offset);
+	}
+	else
+	{
+		const std::pair<uint32_t, uint32_t> query_size_and_offset = get_query_size(type);
+
+		if (stride == query_size_and_offset.first)
+			_orig->CopyBufferRegion(reinterpret_cast<ID3D12Resource *>(dst.handle), dst_offset, reinterpret_cast<ID3D12Resource *>(heap.handle), query_size_and_offset.second + static_cast<UINT64>(first) * query_size_and_offset.first, static_cast<UINT64>(count) * query_size_and_offset.first);
+		else
+			for (uint32_t i = 0; i < count; ++i)
+				_orig->CopyBufferRegion(reinterpret_cast<ID3D12Resource *>(dst.handle), dst_offset + static_cast<UINT64>(i) * stride, reinterpret_cast<ID3D12Resource *>(heap.handle), query_size_and_offset.second + static_cast<UINT64>(i + first) * query_size_and_offset.first, std::min(stride, query_size_and_offset.first - query_size_and_offset.second));
+	}
 }
 
 void reshade::d3d12::command_list_impl::copy_acceleration_structure(api::resource_view source, api::resource_view dest, api::acceleration_structure_copy_mode mode)
@@ -1157,6 +1178,25 @@ void reshade::d3d12::command_list_impl::build_acceleration_structure(api::accele
 		}
 
 		static_cast<ID3D12GraphicsCommandList4 *>(_orig)->BuildRaytracingAccelerationStructure(&desc, 0, nullptr);
+	}
+	else
+	{
+		assert(false);
+	}
+}
+void reshade::d3d12::command_list_impl::query_acceleration_structures(uint32_t count, const api::resource_view *acceleration_structures, api::query_heap heap, api::query_type type, uint32_t first)
+{
+	_has_commands = true;
+
+	if (_supports_ray_tracing)
+	{
+		assert(heap != 0);
+
+		D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC desc = {};
+		desc.DestBuffer = reinterpret_cast<ID3D12Resource *>(heap.handle)->GetGPUVirtualAddress() + static_cast<UINT64>(first) * get_query_size(type).first;
+		desc.InfoType = convert_acceleration_structure_post_build_info_type(type);
+
+		static_cast<ID3D12GraphicsCommandList4 *>(_orig)->EmitRaytracingAccelerationStructurePostbuildInfo(&desc, count, reinterpret_cast<const D3D12_GPU_VIRTUAL_ADDRESS *>(acceleration_structures));
 	}
 	else
 	{

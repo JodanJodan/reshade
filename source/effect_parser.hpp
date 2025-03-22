@@ -63,7 +63,7 @@ namespace reshadefx
 		bool parse_function(type type, std::string name, shader_type stype, int num_threads[3]);
 		bool parse_variable(type type, std::string name, bool global = false);
 		bool parse_technique();
-		bool parse_technique_pass(pass_info &info);
+		bool parse_technique_pass(pass &info);
 		bool parse_type(type &type);
 		bool parse_array_length(type &type);
 		bool parse_expression(expression &expression);
@@ -74,15 +74,16 @@ namespace reshadefx
 		bool parse_statement(bool scoped);
 		bool parse_statement_block(bool scoped);
 
-		codegen *_codegen = nullptr;
 		std::string _errors;
 
-		token _token, _token_next, _token_backup;
 		std::unique_ptr<class lexer> _lexer;
-		size_t _lexer_backup_offset = 0;
+		class codegen *_codegen = nullptr;
+
+		token _token;
+		token _token_next;
+		token _token_backup;
 
 		std::vector<uint32_t> _loop_break_target_stack;
 		std::vector<uint32_t> _loop_continue_target_stack;
-		reshadefx::function_info *_current_function = nullptr;
 	};
 }

@@ -50,8 +50,8 @@ reshade::api::subresource_box reshade::openxr::swapchain_impl::get_view_subresou
 	const api::resource_desc desc = _device->get_resource_desc(_side_by_side_texture);
 
 	return api::subresource_box {
-		static_cast<int32_t>(index * (desc.texture.width / view_count)), 0, 0,
-		static_cast<int32_t>((index + 1) * (desc.texture.width / view_count)), static_cast<int32_t>(desc.texture.height), 1
+		index * (desc.texture.width / view_count), 0, 0,
+		(index + 1) * (desc.texture.width / view_count), desc.texture.height, 1
 	};
 }
 
@@ -61,7 +61,7 @@ bool reshade::openxr::swapchain_impl::on_init()
 	assert(_side_by_side_texture != 0);
 
 #if RESHADE_ADDON
-	invoke_addon_event<addon_event::init_swapchain>(this);
+	invoke_addon_event<addon_event::init_swapchain>(this, false);
 #endif
 
 	init_effect_runtime(this);
@@ -76,7 +76,7 @@ void reshade::openxr::swapchain_impl::on_reset()
 	reset_effect_runtime(this);
 
 #if RESHADE_ADDON
-	invoke_addon_event<addon_event::destroy_swapchain>(this);
+	invoke_addon_event<addon_event::destroy_swapchain>(this, false);
 #endif
 
 	_device->destroy_resource(_side_by_side_texture);
@@ -105,7 +105,7 @@ void reshade::openxr::swapchain_impl::on_present(uint32_t view_count, const api:
 
 	if (target_width != target_desc.texture.width || region_height != target_desc.texture.height || api::format_to_typeless(source_desc.texture.format) != api::format_to_typeless(target_desc.texture.format))
 	{
-		LOG(INFO) << "Resizing runtime " << this << " in VR to " << target_width << "x" << region_height << " ...";
+		reshade::log::message(reshade::log::level::info, "Resizing runtime %p in VR to %ux%u ...", this, target_width, region_height);
 
 		on_reset();
 
@@ -117,7 +117,7 @@ void reshade::openxr::swapchain_impl::on_present(uint32_t view_count, const api:
 				api::resource_desc(target_width, region_height, 1, 1, format, 1, api::memory_heap::gpu_only, api::resource_usage::render_target | api::resource_usage::copy_source | api::resource_usage::copy_dest),
 				nullptr, api::resource_usage::general, &_side_by_side_texture))
 		{
-			LOG(ERROR) << "Failed to create region texture!";
+			reshade::log::message(reshade::log::level::error, "Failed to create region texture!");
 			return;
 		}
 

@@ -9,6 +9,7 @@
 #include "imgui_code_editor.hpp"
 #include <cmath> // std::abs, std::floor, std::fmod
 #include <cctype> // std::isblank, std::tolower
+#include <cstdio> // std::snprintf
 #include <algorithm> // std::max, std::min
 #include <utf8/unchecked.h>
 #include <imgui.h>
@@ -130,13 +131,12 @@ void reshade::imgui::code_editor::render(const char *title, const uint32_t palet
 		ImGui::SetNextWindowFocus();
 	}
 
-	ImGui::BeginChild(title, ImVec2(0, _search_window_open * -bottom_height), border ? ImGuiChildFlags_Border : ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_AlwaysHorizontalScrollbar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNavInputs);
-	ImGui::PushTabStop(true);
+	ImGui::BeginChild(title, ImVec2(0, _search_window_open * -bottom_height), border ? ImGuiChildFlags_Borders : ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_AlwaysHorizontalScrollbar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNavInputs);
 
 	char buf[128] = "", *buf_end = buf;
 
 	// Deduce text start offset by evaluating maximum number of lines plus two spaces as text width
-	snprintf(buf, 16, " %zu ", _lines.size());
+	std::snprintf(buf, 16, " %zu ", _lines.size());
 	const float text_start = ImGui::CalcTextSize(buf).x + _left_margin;
 	// The following holds the approximate width and height of a default character for offset calculation
 	const ImVec2 char_advance = ImVec2(calc_text_size(" ").x, ImGui::GetTextLineHeightWithSpacing() * _line_spacing);
@@ -356,7 +356,7 @@ void reshade::imgui::code_editor::render(const char *title, const uint32_t palet
 	const float space_size = calc_text_size(" ").x;
 
 	size_t line_no = static_cast<size_t>(std::floor(ImGui::GetScrollY() / char_advance.y));
-	size_t line_max = std::max(static_cast<size_t>(0), std::min(_lines.size() - 1, line_no + static_cast<size_t>(std::floor((ImGui::GetScrollY() + ImGui::GetWindowContentRegionMax().y) / char_advance.y))));
+	size_t line_max = std::max(static_cast<size_t>(0), std::min(_lines.size() - 1, line_no + static_cast<size_t>(std::floor((ImGui::GetScrollY() + ImGui::GetContentRegionAvail().y) / char_advance.y))));
 
 	const auto calc_text_distance_to_line_begin = [this, space_size](const text_pos &from) {
 		float distance = 0.0f;
@@ -467,7 +467,7 @@ void reshade::imgui::code_editor::render(const char *title, const uint32_t palet
 		if (auto it = _errors.find(line_no + 1); it != _errors.end())
 		{
 			const ImVec2 beg = ImVec2(line_screen_pos.x + ImGui::GetScrollX(), line_screen_pos.y);
-			const ImVec2 end = ImVec2(line_screen_pos.x + ImGui::GetWindowContentRegionMax().x + 2.0f * ImGui::GetScrollX(), line_screen_pos.y + char_advance.y);
+			const ImVec2 end = ImVec2(line_screen_pos.x + ImGui::GetContentRegionAvail().x + 2.0f * ImGui::GetScrollX(), line_screen_pos.y + char_advance.y);
 
 			draw_list->AddRectFilled(beg, end, palette[it->second.second ? color_warning_marker : color_error_marker]);
 
@@ -487,7 +487,7 @@ void reshade::imgui::code_editor::render(const char *title, const uint32_t palet
 			if (!has_selection())
 			{
 				const ImVec2 beg = ImVec2(line_screen_pos.x + ImGui::GetScrollX(), line_screen_pos.y);
-				const ImVec2 end = ImVec2(line_screen_pos.x + ImGui::GetWindowContentRegionMax().x + 2.0f * ImGui::GetScrollX(), line_screen_pos.y + char_advance.y);
+				const ImVec2 end = ImVec2(line_screen_pos.x + ImGui::GetContentRegionAvail().x + 2.0f * ImGui::GetScrollX(), line_screen_pos.y + char_advance.y);
 
 				draw_list->AddRectFilled(beg, end, palette[is_focused ? color_current_line_fill : color_current_line_fill_inactive]);
 				draw_list->AddRect(beg, end, palette[color_current_line_edge], 1.0f);
@@ -506,7 +506,7 @@ void reshade::imgui::code_editor::render(const char *title, const uint32_t palet
 		}
 
 		// Draw line number (right aligned)
-		snprintf(buf, 16, "%zu  ", line_no + 1);
+		std::snprintf(buf, 16, "%zu  ", line_no + 1);
 
 		draw_list->AddText(ImVec2(text_screen_pos.x - ImGui::CalcTextSize(buf).x, line_screen_pos.y), palette[color_line_number], buf);
 
@@ -568,7 +568,6 @@ void reshade::imgui::code_editor::render(const char *title, const uint32_t palet
 		_scroll_to_cursor = false;
 	}
 
-	ImGui::PopTabStop();
 	ImGui::EndChild();
 
 	ImGui::PopStyleVar();
@@ -755,7 +754,10 @@ void reshade::imgui::code_editor::set_text(const std::string_view text)
 	_undo_base_index = 0;
 	_errors.clear();
 
-	for (auto it = text.begin(); it < text.end();)
+	std::string_view::const_iterator it = text.begin();
+	if (utf8::starts_with_bom(it, text.end()))
+		it += std::size(utf8::bom);
+	for (; it < text.end();)
 	{
 		const utf8::utfchar32_t c = utf8::unchecked::next(it);
 		if (c == '\r')
@@ -1789,11 +1791,11 @@ void reshade::imgui::code_editor::colorize()
 		_colorize_line_end = 0;
 	}
 
-	// Copy lines into string for consumption by the lexer
+	// Copy lines into string for consumption by the lexer (needs to use the same offsets as the indices in '_lines', so strip any unicode characters which are multi-byte)
 	std::string input_string;
 	for (size_t l = from; l < to && l < _lines.size(); ++l, input_string.push_back('\n'))
 		for (size_t k = 0; k < _lines[l].size(); ++k)
-			utf8::unchecked::append(_lines[l][k].c, std::back_inserter(input_string));
+			input_string += _lines[l][k].c < 0x80 ? static_cast<char>(_lines[l][k].c) : '?';
 
 	reshadefx::lexer lexer(
 		std::move(input_string),

@@ -15,11 +15,11 @@ const RECT *convert_box_to_rect(const reshade::api::subresource_box *box, RECT &
 	if (box == nullptr)
 		return nullptr;
 
-	rect.left = box->left;
-	rect.top = box->top;
+	rect.left = static_cast<LONG>(box->left);
+	rect.top = static_cast<LONG>(box->top);
 	assert(box->front == 0);
-	rect.right = box->right;
-	rect.bottom = box->bottom;
+	rect.right = static_cast<LONG>(box->right);
+	rect.bottom = static_cast<LONG>(box->bottom);
 	assert(box->back == 1);
 
 	return &rect;
@@ -127,7 +127,7 @@ void reshade::d3d9::device_impl::on_init()
 
 	if (FAILED(hr))
 	{
-		LOG(ERROR) << "Failed to create copy pipeline!";
+		log::message(log::level::error, "Failed to create copy pipeline!");
 	}
 }
 void reshade::d3d9::device_impl::on_reset()
@@ -1010,8 +1010,10 @@ void reshade::d3d9::device_impl::unmap_texture_region(api::resource resource, ui
 void reshade::d3d9::device_impl::update_buffer_region(const void *data, api::resource resource, uint64_t offset, uint64_t size)
 {
 	assert(resource != 0);
-	assert(data != nullptr);
 	assert(offset <= std::numeric_limits<UINT>::max() && size <= std::numeric_limits<UINT>::max());
+
+	if (data == nullptr)
+		return;
 
 	const auto object = reinterpret_cast<IDirect3DResource9 *>(resource.handle);
 
@@ -1044,7 +1046,9 @@ void reshade::d3d9::device_impl::update_buffer_region(const void *data, api::res
 void reshade::d3d9::device_impl::update_texture_region(const api::subresource_data &data, api::resource resource, uint32_t subresource, const api::subresource_box *box)
 {
 	assert(resource != 0);
-	assert(data.data != nullptr);
+
+	if (data.data == nullptr)
+		return;
 
 	const auto object = reinterpret_cast<IDirect3DResource9 *>(resource.handle);
 
@@ -1065,7 +1069,7 @@ void reshade::d3d9::device_impl::update_texture_region(const api::subresource_da
 			com_ptr<IDirect3DTexture9> intermediate;
 			if (FAILED(_orig->CreateTexture(width, height, 1, use_systemmem_texture ? 0 : D3DUSAGE_DYNAMIC, desc.Format, use_systemmem_texture ? D3DPOOL_SYSTEMMEM : D3DPOOL_DEFAULT, &intermediate, nullptr)))
 			{
-				LOG(ERROR) << "Failed to create upload buffer (width = " << width << ", height = " << height << ", levels = " << "1" << ", usage = " << (use_systemmem_texture ? "0" : "D3DUSAGE_DYNAMIC") << ", format = " << desc.Format << ")!";
+				log::message(log::level::error, "Failed to create upload buffer (width = %u, height = %u, levels = 1, usage = %s, format = %d)!", width, height, use_systemmem_texture ? "0" : "D3DUSAGE_DYNAMIC", desc.Format);
 				return;
 			}
 
@@ -1154,7 +1158,7 @@ void reshade::d3d9::device_impl::update_texture_region(const api::subresource_da
 			{
 				if (FAILED(_orig->CreateVolumeTexture(width, height, depth, 1, 0, desc.Format, D3DPOOL_SYSTEMMEM, &intermediate, nullptr)))
 				{
-					LOG(ERROR) << "Failed to create upload buffer (width = " << width << ", height = " << height << ", depth = " << depth << ", levels = " << "1" << ", usage = " << (use_systemmem_texture ? "0" : "D3DUSAGE_DYNAMIC") << ", format = " << desc.Format << ")!";
+					log::message(log::level::error, "Failed to create upload buffer (width = %u, height = %u, depth = %u, levels = 1, usage = %s, format = %d)!", width, height, depth, use_systemmem_texture ? "0" : "D3DUSAGE_DYNAMIC", desc.Format);
 					return;
 				}
 			}
@@ -1250,7 +1254,7 @@ void reshade::d3d9::device_impl::update_texture_region(const api::subresource_da
 			com_ptr<IDirect3DCubeTexture9> intermediate;
 			if (FAILED(_orig->CreateCubeTexture(width, 1, use_systemmem_texture ? 0 : D3DUSAGE_DYNAMIC, desc.Format, use_systemmem_texture ? D3DPOOL_SYSTEMMEM : D3DPOOL_DEFAULT, &intermediate, nullptr)))
 			{
-				LOG(ERROR) << "Failed to create upload buffer (width = " << width << ", height = " << height << ", levels = " << "1" << ", usage = " << (use_systemmem_texture ? "0" : "D3DUSAGE_DYNAMIC") << ", format = " << desc.Format << ")!";
+				log::message(log::level::error, "Failed to create upload buffer (width = %u, height = %u, levels = 1, usage = %s, format = %d)!", width, height, use_systemmem_texture ? "0" : "D3DUSAGE_DYNAMIC", desc.Format);
 				return;
 			}
 
@@ -1553,7 +1557,7 @@ bool reshade::d3d9::device_impl::create_pipeline(api::pipeline_layout, uint32_t 
 
 			if (FAILED(_orig->CreateVertexBuffer(max_vertices * sizeof(float), D3DUSAGE_WRITEONLY, 0, D3DPOOL_DEFAULT, &_default_input_stream, nullptr)))
 			{
-				LOG(ERROR) << "Failed to create default input stream!";
+				log::message(log::level::error, "Failed to create default input stream!");
 				goto exit_failure;
 			}
 
@@ -1576,7 +1580,7 @@ bool reshade::d3d9::device_impl::create_pipeline(api::pipeline_layout, uint32_t 
 
 			if (FAILED(_orig->CreateVertexDeclaration(declaration, &_default_input_layout)))
 			{
-				LOG(ERROR) << "Failed to create default vertex declaration!";
+				log::message(log::level::error, "Failed to create default vertex declaration!");
 				goto exit_failure;
 			}
 		}
@@ -1707,9 +1711,8 @@ bool reshade::d3d9::device_impl::create_pipeline_layout(uint32_t param_count, co
 				{
 					const uint32_t distance = range.binding - merged_range.binding;
 
-					if ((range.dx_register_index - merged_range.dx_register_index) != distance)
-						return false;
-					assert(merged_range.count <= distance);
+					if ((range.dx_register_index - merged_range.dx_register_index) != distance || merged_range.count > distance)
+						return false; // Overlapping ranges are not supported
 
 					merged_range.count = distance + range.count;
 					merged_range.visibility |= range.visibility;
@@ -1718,9 +1721,8 @@ bool reshade::d3d9::device_impl::create_pipeline_layout(uint32_t param_count, co
 				{
 					const uint32_t distance = merged_range.binding - range.binding;
 
-					if ((merged_range.dx_register_index - range.dx_register_index) != distance)
+					if ((merged_range.dx_register_index - range.dx_register_index) != distance || range.count > distance)
 						return false;
-					assert(range.count <= distance);
 
 					merged_range.binding = range.binding;
 					merged_range.dx_register_index = range.dx_register_index;
@@ -1876,21 +1878,26 @@ void reshade::d3d9::device_impl::update_descriptor_tables(uint32_t count, const 
 	}
 }
 
-bool reshade::d3d9::device_impl::create_query_heap(api::query_type type, uint32_t size, api::query_heap *out_heap)
+bool reshade::d3d9::device_impl::create_query_heap(api::query_type type, uint32_t count, api::query_heap *out_heap)
 {
+	*out_heap = { 0 };
+
+	if (type != api::query_type::occlusion &&
+		type != api::query_type::timestamp)
+		return false;
+
 	const auto impl = new query_heap_impl();
 	impl->type = type;
-	impl->queries.resize(size);
+	impl->queries.resize(count);
 
 	const D3DQUERYTYPE internal_type = convert_query_type(type);
 
-	for (uint32_t i = 0; i < size; ++i)
+	for (uint32_t i = 0; i < count; ++i)
 	{
 		if (FAILED(_orig->CreateQuery(internal_type, &impl->queries[i])))
 		{
 			delete impl;
 
-			*out_heap = { 0 };
 			return false;
 		}
 	}

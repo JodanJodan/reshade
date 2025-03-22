@@ -7,7 +7,7 @@
 #include "d3d10/d3d10_device.hpp"
 #include "d3d11/d3d11_device.hpp"
 #include "d3d12/d3d12_command_queue.hpp"
-#include "dll_log.hpp" // Include late to get HRESULT log overloads
+#include "dll_log.hpp" // Include late to get 'hr_to_string' helper function
 #include "com_utils.hpp"
 #include "hook_manager.hpp"
 #include "addon_manager.hpp"
@@ -32,7 +32,7 @@ static auto rational_to_floating_point(DXGI_RATIONAL value) -> float
 	return value.Denominator != 0 ? static_cast<float>(value.Numerator) / static_cast<float>(value.Denominator) : 0.0f;
 }
 
-bool modify_swapchain_desc(DXGI_SWAP_CHAIN_DESC &internal_desc)
+bool modify_swapchain_desc(DXGI_SWAP_CHAIN_DESC &internal_desc, UINT &sync_interval)
 {
 	reshade::api::swapchain_desc desc = {};
 	desc.back_buffer.type = reshade::api::resource_type::texture_2d;
@@ -55,6 +55,8 @@ bool modify_swapchain_desc(DXGI_SWAP_CHAIN_DESC &internal_desc)
 		desc.back_buffer.usage |= reshade::api::resource_usage::shader_resource;
 	if (internal_desc.BufferUsage & DXGI_USAGE_RENDER_TARGET_OUTPUT)
 		desc.back_buffer.usage |= reshade::api::resource_usage::render_target;
+	if (internal_desc.BufferUsage & DXGI_USAGE_SHARED)
+		desc.back_buffer.flags |= reshade::api::resource_flags::shared;
 	if (internal_desc.BufferUsage & DXGI_USAGE_UNORDERED_ACCESS)
 		desc.back_buffer.usage |= reshade::api::resource_usage::unordered_access;
 
@@ -76,6 +78,8 @@ bool modify_swapchain_desc(DXGI_SWAP_CHAIN_DESC &internal_desc)
 			internal_desc.BufferUsage |= DXGI_USAGE_SHADER_INPUT;
 		if ((desc.back_buffer.usage & reshade::api::resource_usage::render_target) != 0)
 			internal_desc.BufferUsage |= DXGI_USAGE_RENDER_TARGET_OUTPUT;
+		if ((desc.back_buffer.flags & reshade::api::resource_flags::shared) != 0)
+			internal_desc.BufferUsage |= DXGI_USAGE_SHARED;
 		if ((desc.back_buffer.usage & reshade::api::resource_usage::unordered_access) != 0)
 			internal_desc.BufferUsage |= DXGI_USAGE_UNORDERED_ACCESS;
 
@@ -84,12 +88,15 @@ bool modify_swapchain_desc(DXGI_SWAP_CHAIN_DESC &internal_desc)
 		internal_desc.SwapEffect = static_cast<DXGI_SWAP_EFFECT>(desc.present_mode);
 		internal_desc.Flags = desc.present_flags;
 
+		assert(desc.sync_interval <= 4 || desc.sync_interval == UINT_MAX);
+		sync_interval = desc.sync_interval;
+
 		return true;
 	}
 
 	return false;
 }
-bool modify_swapchain_desc(DXGI_SWAP_CHAIN_DESC1 &internal_desc, DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen_desc, HWND window)
+bool modify_swapchain_desc(DXGI_SWAP_CHAIN_DESC1 &internal_desc, UINT &sync_interval, DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen_desc, HWND window)
 {
 	reshade::api::swapchain_desc desc = {};
 	desc.back_buffer.type = reshade::api::resource_type::texture_2d;
@@ -151,6 +158,9 @@ bool modify_swapchain_desc(DXGI_SWAP_CHAIN_DESC1 &internal_desc, DXGI_SWAP_CHAIN
 		internal_desc.SwapEffect = static_cast<DXGI_SWAP_EFFECT>(desc.present_mode);
 		internal_desc.Flags = desc.present_flags;
 
+		assert(desc.sync_interval <= 4 || desc.sync_interval == UINT_MAX);
+		sync_interval = desc.sync_interval;
+
 		if (fullscreen_desc != nullptr)
 		{
 			fullscreen_desc->RefreshRate = floating_point_to_rational(desc.fullscreen_refresh_rate);
@@ -164,114 +174,90 @@ bool modify_swapchain_desc(DXGI_SWAP_CHAIN_DESC1 &internal_desc, DXGI_SWAP_CHAIN
 }
 #endif
 
-static void dump_format(DXGI_FORMAT format)
+static std::string format_to_string(DXGI_FORMAT format)
 {
-	const char *format_string = nullptr;
 	switch (format)
 	{
 	case DXGI_FORMAT_UNKNOWN:
-		format_string = "DXGI_FORMAT_UNKNOWN";
-		break;
+		return "DXGI_FORMAT_UNKNOWN";
 	case DXGI_FORMAT_R8G8B8A8_UNORM:
-		format_string = "DXGI_FORMAT_R8G8B8A8_UNORM";
-		break;
+		return "DXGI_FORMAT_R8G8B8A8_UNORM";
 	case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-		format_string = "DXGI_FORMAT_R8G8B8A8_UNORM_SRGB";
-		break;
+		return "DXGI_FORMAT_R8G8B8A8_UNORM_SRGB";
 	case DXGI_FORMAT_B8G8R8A8_UNORM:
-		format_string = "DXGI_FORMAT_B8G8R8A8_UNORM";
-		break;
+		return "DXGI_FORMAT_B8G8R8A8_UNORM";
 	case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-		format_string = "DXGI_FORMAT_B8G8R8A8_UNORM_SRGB";
-		break;
+		return "DXGI_FORMAT_B8G8R8A8_UNORM_SRGB";
 	case DXGI_FORMAT_R10G10B10A2_UNORM:
-		format_string = "DXGI_FORMAT_R10G10B10A2_UNORM";
-		break;
+		return "DXGI_FORMAT_R10G10B10A2_UNORM";
 	case DXGI_FORMAT_R16G16B16A16_FLOAT:
-		format_string = "DXGI_FORMAT_R16G16B16A16_FLOAT";
-		break;
-	}
-
-	if (format_string != nullptr)
-		LOG(INFO) << "  | Format                                  | " << std::setw(39) << format_string << " |";
-	else
-		LOG(INFO) << "  | Format                                  | " << std::setw(39) << format << " |";
-}
-static void dump_sample_desc(const DXGI_SAMPLE_DESC &desc)
-{
-	LOG(INFO) << "  | SampleCount                             | " << std::setw(39) << desc.Count << " |";
-	switch (desc.Quality)
-	{
-	case D3D11_CENTER_MULTISAMPLE_PATTERN:
-		LOG(INFO) << "  | SampleQuality                           | D3D11_CENTER_MULTISAMPLE_PATTERN        |";
-		break;
-	case D3D11_STANDARD_MULTISAMPLE_PATTERN:
-		LOG(INFO) << "  | SampleQuality                           | D3D11_STANDARD_MULTISAMPLE_PATTERN      |";
-		break;
+		return "DXGI_FORMAT_R16G16B16A16_FLOAT";
 	default:
-		LOG(INFO) << "  | SampleQuality                           | " << std::setw(39) << desc.Quality << " |";
-		break;
+		char temp_string[11];
+		return std::string(temp_string, std::snprintf(temp_string, std::size(temp_string), "%u", static_cast<unsigned int>(format)));
 	}
 }
 
-static void dump_and_modify_swapchain_desc(DXGI_SWAP_CHAIN_DESC &desc)
+static void dump_and_modify_swapchain_desc(DXGI_SWAP_CHAIN_DESC &desc, [[maybe_unused]] UINT &sync_interval)
 {
-	LOG(INFO) << "> Dumping swap chain description:";
-	LOG(INFO) << "  +-----------------------------------------+-----------------------------------------+";
-	LOG(INFO) << "  | Parameter                               | Value                                   |";
-	LOG(INFO) << "  +-----------------------------------------+-----------------------------------------+";
-	LOG(INFO) << "  | Width                                   | " << std::setw(39) << desc.BufferDesc.Width   << " |";
-	LOG(INFO) << "  | Height                                  | " << std::setw(39) << desc.BufferDesc.Height  << " |";
-	LOG(INFO) << "  | RefreshRate                             | " << std::setw(19) << desc.BufferDesc.RefreshRate.Numerator << ' ' << std::setw(19) << desc.BufferDesc.RefreshRate.Denominator << " |";
-	dump_format(desc.BufferDesc.Format);
-	LOG(INFO) << "  | ScanlineOrdering                        | " << std::setw(39) << desc.BufferDesc.ScanlineOrdering   << " |";
-	LOG(INFO) << "  | Scaling                                 | " << std::setw(39) << desc.BufferDesc.Scaling << " |";
-	dump_sample_desc(desc.SampleDesc);
-	LOG(INFO) << "  | BufferUsage                             | " << std::setw(39) << std::hex << desc.BufferUsage << std::dec << " |";
-	LOG(INFO) << "  | BufferCount                             | " << std::setw(39) << desc.BufferCount  << " |";
-	LOG(INFO) << "  | OutputWindow                            | " << std::setw(39) << desc.OutputWindow << " |";
-	LOG(INFO) << "  | Windowed                                | " << std::setw(39) << (desc.Windowed ? "TRUE" : "FALSE") << " |";
-	LOG(INFO) << "  | SwapEffect                              | " << std::setw(39) << desc.SwapEffect   << " |";
-	LOG(INFO) << "  | Flags                                   | " << std::setw(39) << std::hex << desc.Flags << std::dec << " |";
-	LOG(INFO) << "  +-----------------------------------------+-----------------------------------------+";
+	reshade::log::message(reshade::log::level::info, "> Dumping swap chain description:");
+	reshade::log::message(reshade::log::level::info, "  +-----------------------------------------+-----------------------------------------+");
+	reshade::log::message(reshade::log::level::info, "  | Parameter                               | Value                                   |");
+	reshade::log::message(reshade::log::level::info, "  +-----------------------------------------+-----------------------------------------+");
+	reshade::log::message(reshade::log::level::info, "  | Width                                   |"                                " %-39u |", desc.BufferDesc.Width);
+	reshade::log::message(reshade::log::level::info, "  | Height                                  |"                                " %-39u |", desc.BufferDesc.Height);
+	reshade::log::message(reshade::log::level::info, "  | RefreshRate                             |"            " %-19u"            " %-19u |", desc.BufferDesc.RefreshRate.Numerator, desc.BufferDesc.RefreshRate.Denominator);
+	reshade::log::message(reshade::log::level::info, "  | Format                                  |"                                " %-39s |", format_to_string(desc.BufferDesc.Format).c_str());
+	reshade::log::message(reshade::log::level::info, "  | ScanlineOrdering                        |"                                " %-39d |", static_cast<int>(desc.BufferDesc.ScanlineOrdering));
+	reshade::log::message(reshade::log::level::info, "  | Scaling                                 |"                                " %-39d |", static_cast<int>(desc.BufferDesc.Scaling));
+	reshade::log::message(reshade::log::level::info, "  | SampleCount                             |"                                " %-39u |", desc.SampleDesc.Count);
+	reshade::log::message(reshade::log::level::info, "  | SampleQuality                           |"                                " %-39d |", static_cast<int>(desc.SampleDesc.Quality));
+	reshade::log::message(reshade::log::level::info, "  | BufferUsage                             |"                               " %-#39x |", desc.BufferUsage);
+	reshade::log::message(reshade::log::level::info, "  | BufferCount                             |"                                " %-39u |", desc.BufferCount);
+	reshade::log::message(reshade::log::level::info, "  | OutputWindow                            |"                                " %-39p |", desc.OutputWindow);
+	reshade::log::message(reshade::log::level::info, "  | Windowed                                |"                                " %-39s |", desc.Windowed ? "TRUE" : "FALSE");
+	reshade::log::message(reshade::log::level::info, "  | SwapEffect                              |"                                " %-39d |", static_cast<int>(desc.SwapEffect));
+	reshade::log::message(reshade::log::level::info, "  | Flags                                   |"                               " %-#39x |", desc.Flags);
+	reshade::log::message(reshade::log::level::info, "  +-----------------------------------------+-----------------------------------------+");
 
 #if RESHADE_ADDON
-	modify_swapchain_desc(desc);
+	modify_swapchain_desc(desc, sync_interval);
 #endif
 }
-static void dump_and_modify_swapchain_desc(DXGI_SWAP_CHAIN_DESC1 &desc, DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen_desc = nullptr, [[maybe_unused]] HWND window = nullptr)
+static void dump_and_modify_swapchain_desc(DXGI_SWAP_CHAIN_DESC1 &desc, [[maybe_unused]] UINT &sync_interval, DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen_desc = nullptr, [[maybe_unused]] HWND window = nullptr)
 {
-	LOG(INFO) << "> Dumping swap chain description:";
-	LOG(INFO) << "  +-----------------------------------------+-----------------------------------------+";
-	LOG(INFO) << "  | Parameter                               | Value                                   |";
-	LOG(INFO) << "  +-----------------------------------------+-----------------------------------------+";
-	LOG(INFO) << "  | Width                                   | " << std::setw(39) << desc.Width   << " |";
-	LOG(INFO) << "  | Height                                  | " << std::setw(39) << desc.Height  << " |";
+	reshade::log::message(reshade::log::level::info, "> Dumping swap chain description:");
+	reshade::log::message(reshade::log::level::info, "  +-----------------------------------------+-----------------------------------------+");
+	reshade::log::message(reshade::log::level::info, "  | Parameter                               | Value                                   |");
+	reshade::log::message(reshade::log::level::info, "  +-----------------------------------------+-----------------------------------------+");
+	reshade::log::message(reshade::log::level::info, "  | Width                                   |"                                " %-39u |", desc.Width);
+	reshade::log::message(reshade::log::level::info, "  | Height                                  |"                                " %-39u |", desc.Height);
 	if (fullscreen_desc != nullptr)
 	{
-		LOG(INFO) << "  | RefreshRate                             | " << std::setw(19) << fullscreen_desc->RefreshRate.Numerator << ' ' << std::setw(19) << fullscreen_desc->RefreshRate.Denominator << " |";
+	reshade::log::message(reshade::log::level::info, "  | RefreshRate                             |"              " %-19u"          " %-19u |", fullscreen_desc->RefreshRate.Numerator, fullscreen_desc->RefreshRate.Denominator);
 	}
-	dump_format(desc.Format);
-	LOG(INFO) << "  | Stereo                                  | " << std::setw(39) << (desc.Stereo ? "TRUE" : "FALSE") << " |";
+	reshade::log::message(reshade::log::level::info, "  | Format                                  |"                                " %-39s |", format_to_string(desc.Format).c_str());
+	reshade::log::message(reshade::log::level::info, "  | Stereo                                  |"                                " %-39s |", desc.Stereo ? "TRUE" : "FALSE");
 	if (fullscreen_desc != nullptr)
 	{
-		LOG(INFO) << "  | ScanlineOrdering                        | " << std::setw(39) << fullscreen_desc->ScanlineOrdering << " |";
-		LOG(INFO) << "  | Scaling                                 | " << std::setw(39) << fullscreen_desc->Scaling << " |";
+	reshade::log::message(reshade::log::level::info, "  | ScanlineOrdering                        |"                                " %-39d |", static_cast<int>(fullscreen_desc->ScanlineOrdering));
+	reshade::log::message(reshade::log::level::info, "  | Scaling                                 |"                                " %-39d |", static_cast<int>(fullscreen_desc->Scaling));
 	}
-	dump_sample_desc(desc.SampleDesc);
-	LOG(INFO) << "  | BufferUsage                             | " << std::setw(39) << std::hex << desc.BufferUsage << std::dec << " |";
-	LOG(INFO) << "  | BufferCount                             | " << std::setw(39) << desc.BufferCount << " |";
+	reshade::log::message(reshade::log::level::info, "  | SampleCount                             |"                                " %-39u |", desc.SampleDesc.Count);
+	reshade::log::message(reshade::log::level::info, "  | SampleQuality                           |"                                " %-39d |", static_cast<int>(desc.SampleDesc.Quality));
+	reshade::log::message(reshade::log::level::info, "  | BufferUsage                             |"                               " %-#39x |", desc.BufferUsage);
+	reshade::log::message(reshade::log::level::info, "  | BufferCount                             |"                                " %-39u |", desc.BufferCount);
 	if (fullscreen_desc != nullptr)
 	{
-		LOG(INFO) << "  | Windowed                                | " << std::setw(39) << (fullscreen_desc->Windowed ? "TRUE" : "FALSE") << " |";
+	reshade::log::message(reshade::log::level::info, "  | Windowed                                |"                                " %-39s |", fullscreen_desc->Windowed ? "TRUE" : "FALSE");
 	}
-	LOG(INFO) << "  | SwapEffect                              | " << std::setw(39) << desc.SwapEffect  << " |";
-	LOG(INFO) << "  | AlphaMode                               | " << std::setw(39) << desc.AlphaMode   << " |";
-	LOG(INFO) << "  | Flags                                   | " << std::setw(39) << std::hex << desc.Flags << std::dec << " |";
-	LOG(INFO) << "  +-----------------------------------------+-----------------------------------------+";
+	reshade::log::message(reshade::log::level::info, "  | SwapEffect                              |"                                " %-39d |", static_cast<int>(desc.SwapEffect));
+	reshade::log::message(reshade::log::level::info, "  | AlphaMode                               |"                                " %-39d |", static_cast<int>(desc.AlphaMode));
+	reshade::log::message(reshade::log::level::info, "  | Flags                                   |"                               " %-#39x |", desc.Flags);
+	reshade::log::message(reshade::log::level::info, "  +-----------------------------------------+-----------------------------------------+");
 
 #if RESHADE_ADDON
-	modify_swapchain_desc(desc, fullscreen_desc, window);
+	modify_swapchain_desc(desc, sync_interval, fullscreen_desc, window);
 #endif
 }
 
@@ -328,13 +314,13 @@ UINT query_device(IUnknown *&device, com_ptr<IUnknown> &device_proxy)
 }
 
 template <typename T>
-static void init_swapchain_proxy(T *&swapchain, UINT direct3d_version, const com_ptr<IUnknown> &device_proxy, DXGI_USAGE usage)
+static void init_swapchain_proxy(T *&swapchain, UINT direct3d_version, const com_ptr<IUnknown> &device_proxy, DXGI_USAGE usage, UINT sync_interval)
 {
 	DXGISwapChain *swapchain_proxy = nullptr;
 
 	if ((usage & DXGI_USAGE_RENDER_TARGET_OUTPUT) == 0)
 	{
-		LOG(WARN) << "Skipping swap chain due to missing 'DXGI_USAGE_RENDER_TARGET_OUTPUT' flag.";
+		reshade::log::message(reshade::log::level::warning, "Skipping swap chain due to missing 'DXGI_USAGE_RENDER_TARGET_OUTPUT' flag.");
 	}
 	else if (direct3d_version == 10)
 	{
@@ -359,170 +345,170 @@ static void init_swapchain_proxy(T *&swapchain, UINT direct3d_version, const com
 		}
 		else
 		{
-			LOG(WARN) << "Skipping swap chain because it is missing support for the IDXGISwapChain3 interface.";
+			reshade::log::message(reshade::log::level::warning, "Skipping swap chain because it is missing support for the IDXGISwapChain3 interface.");
 		}
 	}
 	else
 	{
-		LOG(WARN) << "Skipping swap chain because it was created without a proxy Direct3D device.";
+		reshade::log::message(reshade::log::level::warning, "Skipping swap chain because it was created without a proxy Direct3D device.");
 	}
 
 	if (swapchain_proxy != nullptr)
 	{
 #if RESHADE_VERBOSE_LOG
-		LOG(DEBUG) << "Returning " << "IDXGISwapChain" << swapchain_proxy->_interface_version << " object " << swapchain_proxy << " (" << swapchain_proxy->_orig << ").";
+		reshade::log::message(reshade::log::level::debug, "Returning IDXGISwapChain%hu object %p (%p).", swapchain_proxy->_interface_version, swapchain_proxy, swapchain_proxy->_orig);
 #endif
 		swapchain = swapchain_proxy;
+
+		swapchain_proxy->_sync_interval = sync_interval;
 	}
 }
 
 HRESULT STDMETHODCALLTYPE IDXGIFactory_CreateSwapChain(IDXGIFactory *pFactory, IUnknown *pDevice, DXGI_SWAP_CHAIN_DESC *pDesc, IDXGISwapChain **ppSwapChain)
 {
-	if (g_in_dxgi_runtime)
-		return reshade::hooks::call(IDXGIFactory_CreateSwapChain, reshade::hooks::vtable_from_instance(pFactory) + 10)(pFactory, pDevice, pDesc, ppSwapChain);
+	const auto trampoline = reshade::hooks::call(IDXGIFactory_CreateSwapChain, reshade::hooks::vtable_from_instance(pFactory) + 10);
 
-	LOG(INFO) << "Redirecting " << "IDXGIFactory::CreateSwapChain" << '('
-		<<   "this = " << pFactory
-		<< ", pDevice = " << pDevice
-		<< ", pDesc = " << pDesc
-		<< ", ppSwapChain = " << ppSwapChain
-		<< ')' << " ...";
+	if (g_in_dxgi_runtime)
+		return trampoline(pFactory, pDevice, pDesc, ppSwapChain);
+
+	reshade::log::message(
+		reshade::log::level::info,
+		"Redirecting IDXGIFactory::CreateSwapChain(this = %p, pDevice = %p, pDesc = %p, ppSwapChain = %p) ...",
+		pFactory, pDevice, pDesc, ppSwapChain);
 
 	if (pDevice == nullptr || pDesc == nullptr || ppSwapChain == nullptr)
 		return DXGI_ERROR_INVALID_CALL;
 
 	DXGI_SWAP_CHAIN_DESC desc = *pDesc;
-	dump_and_modify_swapchain_desc(desc);
+	UINT sync_interval = UINT_MAX;
+	dump_and_modify_swapchain_desc(desc, sync_interval);
 
 	com_ptr<IUnknown> device_proxy;
 	const UINT direct3d_version = query_device(pDevice, device_proxy);
 
 	g_in_dxgi_runtime = true;
-	const HRESULT hr = reshade::hooks::call(IDXGIFactory_CreateSwapChain, reshade::hooks::vtable_from_instance(pFactory) + 10)(pFactory, pDevice, &desc, ppSwapChain);
+	const HRESULT hr = trampoline(pFactory, pDevice, &desc, ppSwapChain);
 	g_in_dxgi_runtime = false;
 	if (FAILED(hr))
 	{
-		LOG(WARN) << "IDXGIFactory::CreateSwapChain" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDXGIFactory::CreateSwapChain failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 		return hr;
 	}
 
-	init_swapchain_proxy(*ppSwapChain, direct3d_version, device_proxy, desc.BufferUsage);
+	init_swapchain_proxy(*ppSwapChain, direct3d_version, device_proxy, desc.BufferUsage, sync_interval);
 
 	return hr;
 }
 
 HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForHwnd(IDXGIFactory2 *pFactory, IUnknown *pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1 *pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *pFullscreenDesc, IDXGIOutput *pRestrictToOutput, IDXGISwapChain1 **ppSwapChain)
 {
-	if (g_in_dxgi_runtime)
-		return reshade::hooks::call(IDXGIFactory2_CreateSwapChainForHwnd, reshade::hooks::vtable_from_instance(pFactory) + 15)(pFactory, pDevice, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
+	const auto trampoline = reshade::hooks::call(IDXGIFactory2_CreateSwapChainForHwnd, reshade::hooks::vtable_from_instance(pFactory) + 15);
 
-	LOG(INFO) << "Redirecting " << "IDXGIFactory2::CreateSwapChainForHwnd" << '('
-		<<   "this = " << pFactory
-		<< ", pDevice = " << pDevice
-		<< ", hWnd = " << hWnd
-		<< ", pDesc = " << pDesc
-		<< ", pFullscreenDesc = " << pFullscreenDesc
-		<< ", pRestrictToOutput = " << pRestrictToOutput
-		<< ", ppSwapChain = " << ppSwapChain
-		<< ')' << " ...";
+	if (g_in_dxgi_runtime)
+		return trampoline(pFactory, pDevice, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
+
+	reshade::log::message(
+		reshade::log::level::info,
+		"Redirecting IDXGIFactory2::CreateSwapChainForHwnd(this = %p, pDevice = %p, hWnd = %p, pDesc = %p, pFullscreenDesc = %p, pRestrictToOutput = %p, ppSwapChain = ) ...",
+		pFactory, pDevice, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
 
 	if (pDevice == nullptr || pDesc == nullptr || ppSwapChain == nullptr)
 		return DXGI_ERROR_INVALID_CALL;
 
 	DXGI_SWAP_CHAIN_DESC1 desc = *pDesc;
+	UINT sync_interval = UINT_MAX;
 	DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreen_desc = {};
 	if (pFullscreenDesc != nullptr)
 		fullscreen_desc = *pFullscreenDesc;
 	else
 		fullscreen_desc.Windowed = TRUE;
-	dump_and_modify_swapchain_desc(desc, &fullscreen_desc, hWnd);
+	dump_and_modify_swapchain_desc(desc, sync_interval, &fullscreen_desc, hWnd);
 
 	com_ptr<IUnknown> device_proxy;
 	const UINT direct3d_version = query_device(pDevice, device_proxy);
 
 	g_in_dxgi_runtime = true;
-	const HRESULT hr = reshade::hooks::call(IDXGIFactory2_CreateSwapChainForHwnd, reshade::hooks::vtable_from_instance(pFactory) + 15)(pFactory, pDevice, hWnd, &desc, fullscreen_desc.Windowed ? nullptr : &fullscreen_desc, pRestrictToOutput, ppSwapChain);
+	const HRESULT hr = trampoline(pFactory, pDevice, hWnd, &desc, fullscreen_desc.Windowed ? nullptr : &fullscreen_desc, pRestrictToOutput, ppSwapChain);
 	g_in_dxgi_runtime = false;
 	if (FAILED(hr))
 	{
-		LOG(WARN) << "IDXGIFactory2::CreateSwapChainForHwnd" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDXGIFactory2::CreateSwapChainForHwnd failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 		return hr;
 	}
 
-	init_swapchain_proxy(*ppSwapChain, direct3d_version, device_proxy, desc.BufferUsage);
+	init_swapchain_proxy(*ppSwapChain, direct3d_version, device_proxy, desc.BufferUsage, sync_interval);
 
 	return hr;
 }
 HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForCoreWindow(IDXGIFactory2 *pFactory, IUnknown *pDevice, IUnknown *pWindow, const DXGI_SWAP_CHAIN_DESC1 *pDesc, IDXGIOutput *pRestrictToOutput, IDXGISwapChain1 **ppSwapChain)
 {
-	if (g_in_dxgi_runtime)
-		return reshade::hooks::call(IDXGIFactory2_CreateSwapChainForCoreWindow, reshade::hooks::vtable_from_instance(pFactory) + 16)(pFactory, pDevice, pWindow, pDesc, pRestrictToOutput, ppSwapChain);
+	const auto trampoline = reshade::hooks::call(IDXGIFactory2_CreateSwapChainForCoreWindow, reshade::hooks::vtable_from_instance(pFactory) + 16);
 
-	LOG(INFO) << "Redirecting " << "IDXGIFactory2::CreateSwapChainForCoreWindow" << '('
-		<<   "this = " << pFactory
-		<< ", pDevice = " << pDevice
-		<< ", pWindow = " << pWindow
-		<< ", pDesc = " << pDesc
-		<< ", pRestrictToOutput = " << pRestrictToOutput
-		<< ", ppSwapChain = " << ppSwapChain
-		<< ')' << " ...";
+	if (g_in_dxgi_runtime)
+		return trampoline(pFactory, pDevice, pWindow, pDesc, pRestrictToOutput, ppSwapChain);
+
+	reshade::log::message(
+		reshade::log::level::info,
+		"Redirecting IDXGIFactory2::CreateSwapChainForCoreWindow(this = %p, pDevice = %p, pWindow = %p, pDesc = %p, pRestrictToOutput = %p, ppSwapChain = ) ...",
+		pFactory, pDevice, pWindow, pDesc, pRestrictToOutput, ppSwapChain);
 
 	if (pDevice == nullptr || pDesc == nullptr || ppSwapChain == nullptr)
 		return DXGI_ERROR_INVALID_CALL;
 
 	DXGI_SWAP_CHAIN_DESC1 desc = *pDesc;
+	UINT sync_interval = UINT_MAX;
 	// UWP applications cannot be set into fullscreen mode
-	dump_and_modify_swapchain_desc(desc);
+	dump_and_modify_swapchain_desc(desc, sync_interval);
 
 	com_ptr<IUnknown> device_proxy;
 	const UINT direct3d_version = query_device(pDevice, device_proxy);
 
 	g_in_dxgi_runtime = true;
-	const HRESULT hr = reshade::hooks::call(IDXGIFactory2_CreateSwapChainForCoreWindow, reshade::hooks::vtable_from_instance(pFactory) + 16)(pFactory, pDevice, pWindow, &desc, pRestrictToOutput, ppSwapChain);
+	const HRESULT hr = trampoline(pFactory, pDevice, pWindow, &desc, pRestrictToOutput, ppSwapChain);
 	g_in_dxgi_runtime = false;
 	if (FAILED(hr))
 	{
-		LOG(WARN) << "IDXGIFactory2::CreateSwapChainForCoreWindow" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDXGIFactory2::CreateSwapChainForCoreWindow failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 		return hr;
 	}
 
-	init_swapchain_proxy(*ppSwapChain, direct3d_version, device_proxy, desc.BufferUsage);
+	init_swapchain_proxy(*ppSwapChain, direct3d_version, device_proxy, desc.BufferUsage, sync_interval);
 
 	return hr;
 }
 HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForComposition(IDXGIFactory2 *pFactory, IUnknown *pDevice, const DXGI_SWAP_CHAIN_DESC1 *pDesc, IDXGIOutput *pRestrictToOutput, IDXGISwapChain1 **ppSwapChain)
 {
-	if (g_in_dxgi_runtime)
-		return reshade::hooks::call(IDXGIFactory2_CreateSwapChainForComposition, reshade::hooks::vtable_from_instance(pFactory) + 24)(pFactory, pDevice, pDesc, pRestrictToOutput, ppSwapChain);
+	const auto trampoline = reshade::hooks::call(IDXGIFactory2_CreateSwapChainForComposition, reshade::hooks::vtable_from_instance(pFactory) + 24);
 
-	LOG(INFO) << "Redirecting " << "IDXGIFactory2::CreateSwapChainForComposition" << '('
-		<<   "this = " << pFactory
-		<< ", pDevice = " << pDevice
-		<< ", pDesc = " << pDesc
-		<< ", pRestrictToOutput = " << pRestrictToOutput
-		<< ", ppSwapChain = " << ppSwapChain
-		<< ')' << " ...";
+	if (g_in_dxgi_runtime)
+		return trampoline(pFactory, pDevice, pDesc, pRestrictToOutput, ppSwapChain);
+
+	reshade::log::message(
+		reshade::log::level::info,
+		"Redirecting IDXGIFactory2::CreateSwapChainForComposition(this = %p, pDevice = %p, pDesc = %p, pRestrictToOutput = %p, ppSwapChain = ) ...",
+		pFactory, pDevice, pDesc, pRestrictToOutput, ppSwapChain);
 
 	if (pDevice == nullptr || pDesc == nullptr || ppSwapChain == nullptr)
 		return DXGI_ERROR_INVALID_CALL;
 
 	DXGI_SWAP_CHAIN_DESC1 desc = *pDesc;
+	UINT sync_interval = UINT_MAX;
 	// Composition swap chains cannot be set into fullscreen mode
-	dump_and_modify_swapchain_desc(desc);
+	dump_and_modify_swapchain_desc(desc, sync_interval);
 
 	com_ptr<IUnknown> device_proxy;
 	const UINT direct3d_version = query_device(pDevice, device_proxy);
 
 	g_in_dxgi_runtime = true;
-	const HRESULT hr = reshade::hooks::call(IDXGIFactory2_CreateSwapChainForComposition, reshade::hooks::vtable_from_instance(pFactory) + 24)(pFactory, pDevice, &desc, pRestrictToOutput, ppSwapChain);
+	const HRESULT hr = trampoline(pFactory, pDevice, &desc, pRestrictToOutput, ppSwapChain);
 	g_in_dxgi_runtime = false;
 	if (FAILED(hr))
 	{
-		LOG(WARN) << "IDXGIFactory2::CreateSwapChainForComposition" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDXGIFactory2::CreateSwapChainForComposition failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 		return hr;
 	}
 
-	init_swapchain_proxy(*ppSwapChain, direct3d_version, device_proxy, desc.BufferUsage);
+	init_swapchain_proxy(*ppSwapChain, direct3d_version, device_proxy, desc.BufferUsage, sync_interval);
 
 	return hr;
 }
@@ -530,8 +516,8 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForComposition(IDXGIFacto
 extern "C" HRESULT WINAPI CreateDXGIFactory(REFIID riid, void **ppFactory)
 {
 #if RESHADE_VERBOSE_LOG
-	LOG(INFO) << "Redirecting " << "CreateDXGIFactory" << '(' << "riid = " << riid << ", ppFactory = " << ppFactory << ')' << " ...";
-	LOG(INFO) << "> Passing on to " << "CreateDXGIFactory1" << ':';
+	reshade::log::message(reshade::log::level::info, "Redirecting CreateDXGIFactory(riid = %s, ppFactory = %p) ...", reshade::log::iid_to_string(riid).c_str(), ppFactory);
+	reshade::log::message(reshade::log::level::info, "> Passing on to CreateDXGIFactory1:");
 #endif
 
 	// DXGI 1.1 should always be available, so to simplify code just call 'CreateDXGIFactory' which is otherwise identical
@@ -541,12 +527,12 @@ extern "C" HRESULT WINAPI CreateDXGIFactory1(REFIID riid, void **ppFactory)
 {
 	// Do NOT skip in case this is called internally for D3D10/D3D11 (otherwise the 'IDXGIFactory::CreateSwapChain' call in 'D3D10/11CreateDeviceAndSwapChain' will not be redirected)
 
-	LOG(INFO) << "Redirecting " << "CreateDXGIFactory1" << '(' << "riid = " << riid << ", ppFactory = " << ppFactory << ')' << " ...";
+	reshade::log::message(reshade::log::level::info, "Redirecting CreateDXGIFactory1(riid = %s, ppFactory = %p) ...", reshade::log::iid_to_string(riid).c_str(), ppFactory);
 
 	const HRESULT hr = reshade::hooks::call(CreateDXGIFactory1)(riid, ppFactory);
 	if (FAILED(hr))
 	{
-		LOG(WARN) << "CreateDXGIFactory1" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "CreateDXGIFactory1 failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 		return hr;
 	}
 
@@ -564,7 +550,7 @@ extern "C" HRESULT WINAPI CreateDXGIFactory1(REFIID riid, void **ppFactory)
 	}
 
 #if RESHADE_VERBOSE_LOG
-	LOG(DEBUG) << "Returning " << "IDXGIFactory" << " object " << factory << '.';
+	reshade::log::message(reshade::log::level::debug, "Returning IDXGIFactory object %p.", factory);
 #endif
 	return hr;
 }
@@ -578,8 +564,12 @@ extern "C" HRESULT WINAPI CreateDXGIFactory2(UINT Flags, REFIID riid, void **ppF
 	//   IDXGIFactory4 {1BC6EA02-EF36-464F-BF0C-21CA39E5168A}
 	//   IDXGIFactory5 {7632E1f5-EE65-4DCA-87FD-84CD75F8838D}
 	//   IDXGIFactory6 {C1B6694F-FF09-44A9-B03C-77900A0A1D17}
+	//   IDXGIFactory7 {A4966EED-76DB-44DA-84C1-EE9A7AFB20A8}
 
-	LOG(INFO) << "Redirecting " << "CreateDXGIFactory2" << '(' << "Flags = " << std::hex << Flags << std::dec << ", riid = " << riid << ", ppFactory = " << ppFactory << ')' << " ...";
+	reshade::log::message(
+		reshade::log::level::info,
+		"Redirecting CreateDXGIFactory2(Flags = %#x, riid = %s, ppFactory = %p) ...",
+		Flags, reshade::log::iid_to_string(riid).c_str(), ppFactory);
 
 	const auto trampoline = is_windows7() ? nullptr : reshade::hooks::call(CreateDXGIFactory2);
 
@@ -587,17 +577,40 @@ extern "C" HRESULT WINAPI CreateDXGIFactory2(UINT Flags, REFIID riid, void **ppF
 	// This needs to happen because some applications only check if CreateDXGIFactory2 exists, which is always the case if they load ReShade, to decide whether to call it or CreateDXGIFactory1
 	if (trampoline == nullptr)
 	{
-		LOG(INFO) << "> Passing on to " << "CreateDXGIFactory1" << ':';
+		reshade::log::message(reshade::log::level::info, "> Passing on to CreateDXGIFactory1:");
 
 		return CreateDXGIFactory1(riid, ppFactory);
 	}
 
 	// It is crucial that ReShade hooks this after the Steam overlay already hooked it, so that ReShade is called first and the Steam overlay is called through the trampoline below
 	// This is because the Steam overlay only hooks the swap chain creation functions when the vtable entries for them still point to the original functions, it will no longer do so once ReShade replaced them ("... points to another module, skipping hooks" in GameOverlayRenderer.log)
-	const HRESULT hr = trampoline(Flags, riid, ppFactory);
+
+	// Upgrade factory interface to the highest available at creation, to ensure the virtual function table cannot be replaced afterwards during 'QueryInterface'
+	static constexpr IID iid_lookup[] = {
+		__uuidof(IDXGIFactory),
+		__uuidof(IDXGIFactory1),
+		__uuidof(IDXGIFactory2),
+		__uuidof(IDXGIFactory3),
+		__uuidof(IDXGIFactory4),
+		__uuidof(IDXGIFactory5),
+		__uuidof(IDXGIFactory6),
+		__uuidof(IDXGIFactory7),
+	};
+	HRESULT hr = E_NOINTERFACE;
+	if (std::find(std::begin(iid_lookup), std::end(iid_lookup), riid) == std::end(iid_lookup))
+	{
+		hr = trampoline(Flags, riid, ppFactory); // Fall back in case of unknown interface version
+	}
+	else
+	{
+		for (auto it = std::rbegin(iid_lookup); it != std::rend(iid_lookup); ++it)
+			if (SUCCEEDED(hr = trampoline(Flags, *it, ppFactory)) || *it == riid)
+				break;
+	}
+
 	if (FAILED(hr))
 	{
-		LOG(WARN) << "CreateDXGIFactory2" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "CreateDXGIFactory2 failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 		return hr;
 	}
 
@@ -614,7 +627,7 @@ extern "C" HRESULT WINAPI CreateDXGIFactory2(UINT Flags, REFIID riid, void **ppF
 	}
 
 #if RESHADE_VERBOSE_LOG
-	LOG(DEBUG) << "Returning " << "IDXGIFactory" << " object " << factory << '.';
+	reshade::log::message(reshade::log::level::debug, "Returning IDXGIFactory object %p.", factory);
 #endif
 	return hr;
 }

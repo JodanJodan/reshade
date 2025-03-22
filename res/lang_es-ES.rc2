@@ -1,5 +1,5 @@
 /////////////////////////////////////////////////////////////////////////////
-// Spanish (Spain) resources
+// Spanish (Spain, International Sort) resources
 
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ESN)
 LANGUAGE 10, 3
@@ -42,12 +42,12 @@ BEGIN
 33659 "Abrir carpeta"
 16638 "Autoguard. act."
 1761 "Autoguardado"
-62984 "Guardar automáticamente los cambios que se hagan al preset"
+55927 "Guardar automáticamente los cambios que se hagan al preset."
 62638 "¿Resetear todos los cambios que se le hicieron al preset?"
-10706 "Resetear el preset"
-4381 "Limpiar y guardar el preset actual (remueve la configuración de los efectos desactivados)"
-4889 "Guardar preset"
-20029 "Crear un preset nuevo"
+16681 "Resetear el preset."
+5457 "Limpiar y guardar el preset actual (remueve la configuración de los efectos desactivados)."
+54866 "Guardar preset."
+52495 "Crear un preset nuevo."
 62989 "Heredar el preset actual"
 6867 "Plantilla"
 31597 "Nombre"
@@ -58,13 +58,14 @@ BEGIN
 46707 "Colapsar todos"
 20841 "Expandir todos"
 11702 "Ésta es la lista de efectos. Contiene todos los efectos encontrados en la carpeta de efectos especificada en los ajustes.\n\nPodés buscar efectos escribiendo su nombre arriba donde dice ""Buscar"".\n\nSe pueden activar o desactivar efectos haciendo click en ellos. También se puede cambiar el orden de renderizado de los efectos arrastrándolos hacia arriba o abajo en la lista (los efectos siempre se renderizan desde arriba hacia abajo).\nHacé click derecho en un efecto de la lista para abrir un menú con opciones extra."
-36973 "Mové el mouse encima del efecto en rojo para ver los errores o fijáte en el log para más detalles."
+55045 "Mové el mouse encima del efecto en rojo para ver los errores o fijáte en el log para más detalles."
 45409 "Los efectos están desactivados. Apretá '%s' para activarlos."
 5776 "Carga forzada de todos los efectos (%zu restantes)"
 23304 "Ésta es la lista de variables. Contiene todas las configuraciones del efecto. Los valores se aplican en tiempo real.\n\nApretá 'Ctrl' y hacé click en una para editar su valor manualmente (también se puede mantener 'Ctrl' mientras se edita la variable para ignorar su valor mínimo y máximo).\nHaciendo click derecho sobre una variable abre un menú con más opciones.\n\nUna vez terminada la configuración del preset no te olvidés de activar el 'Modo Rendimiento'. Esto hace que se recarguen los efectos de una manera más optimizada para mejorar el rendimiento pero desactiva la configuración de las variables."
 35908 "Recargar"
+49017 "Recarga todos los efectos (también se puede mantener 'Ctrl' mientras haces clic para limpiar el cache de los efectos antes de cargarlos)."
 13040 "Modo Rendimiento"
-13193 "Recarga los efectos de una manera más optimizada para mejorar el rendimiento (desactiva la configuración de las variables)"
+16569 "Recarga los efectos de una manera más optimizada para mejorar el rendimiento pero desactiva la configuración de las variables."
 23801 "Continuar"
 54263 "Saltar el tutorial"
 34234 "Terminar"
@@ -85,7 +86,7 @@ BEGIN
 37235 "Carpeta de búsqueda para efectos"
 16540 "Lista de directorios de búsqueda para archivos de efectos (.fx).\nDirectorios que terminen en ""\\**"" son buscados recursivamente."
 54466 "Carpeta de búsqueda para texturas"
-54834 "Lista de directorios de búsqueda para archivos de texturas.\nDirectorios que terminen en ""\\**"" son buscados recursivamente."
+46747 "Lista de directorios de búsqueda para archivos de texturas.\nDirectorios que terminen en ""\\**"" son buscados recursivamente."
 24012 "Cargar solo los efectos activados"
 25062 "Limpiar el cache de los efectos"
 14824 "Limpiar el cache de los efectos en ""%s""."
@@ -93,7 +94,8 @@ BEGIN
 34032 "Tecla para las capturas"
 8134 "Carpeta para las capturas"
 25098 "Nombre de las capturas"
-40143 "Macros que se pueden añadir:\n  %%AppName%%         Nombre de la aplicación (%s)\n  %%PresetName%%      Nombre del archivo del preset (%s)\n  %%Date%%            Fecha con el formato '%s'\n  %%DateYear%%        Año\n  %%DateMonth%%       Mes\n  %%DateDay%%         Día\n  %%Time%%            Tiempo con el formato '%s'\n  %%TimeHour%%        Horas\n  %%TimeMinute%%      Minutos\n  %%TimeSecond%%      Segundos\n  %%TimeMS%%          Milisegundos\n  %%Count%%           Número de capturas tomadas en ésta sesión\n"
+30328 "Macros que se pueden añadir:\n  %%AppName%%         Nombre de la aplicación (%s)\n  %%PresetName%%      Nombre del archivo del preset (%s)\n  %%BeforeAfter%%     Término que describe el momento en que se tomó la captura ('Before', 'After' o 'Overlay')\n  %%Date%%            Fecha con el formato '%s'\n  %%DateYear%%        Año\n  %%DateMonth%%       Mes\n  %%DateDay%%         Día\n  %%Time%%            Tiempo con el formato '%s'\n  %%TimeHour%%        Horas\n  %%TimeMinute%%      Minutos\n  %%TimeSecond%%      Segundos\n  %%TimeMS%%          Milisegundos\n  %%Count%%           Número de capturas tomadas en ésta sesión\n"
+4289 "Calidad del HDR PNG"
 24896 "Formato de las capturas"
 3555 "Calidad del JPEG"
 13473 "Limpiar la transparencia"
@@ -103,9 +105,9 @@ BEGIN
 12682 "Sonido de captura"
 31901 "Archivo de sonido que se reproduce cuando se saca una captura."
 8229 "Comando post guardado"
-7221 "Ejecutable para después de tomar una captura.\nEsto se puede usar para hacer algún procesado adicional en la imagen (por ejemplo, comprimirla con un optimizador de imagen)."
+60010 "Ejecutable para después de tomar una captura.\nEsto se puede usar para hacer algún procesado adicional en la imagen (por ejemplo, comprimirla con un optimizador de imagen)."
 8195 "Argumentos de comando post guardado"
-6238 "Macros que se pueden añadir:\n  %%AppName%%         Nombre de la aplicación (%s)\n  %%PresetName%%      Nombre del archivo del preset (%s)\n  %%Date%%            Fecha con el formato '%s'\n  %%DateYear%%        Año\n  %%DateMonth%%       Mes\n  %%DateDay%%         Día\n  %%Time%%            Tiempo con el formato '%s'\n  %%TimeHour%%        Horas\n  %%TimeMinute%%      Minutos\n  %%TimeSecond%%      Segundos\n  %%TimeMS%%          Milisegundos\n  %%TargetPath%%      Ruta de la captura (%s)\n  %%TargetDir%%       Ruta de la carpeta de capturas (%s)\n  %%TargetFileName%%  Nombre de la captura (%s)\n  %%TargetExt%%       Extensión del archivo de la captura (%s)\n  %%TargetName%%      Nombre de la captura sin extensión (%s)\n  %%Count%%           Número de capturas tomadas en ésta sesión\n"
+37967 "Macros que se pueden añadir:\n  %%AppName%%         Nombre de la aplicación (%s)\n  %%PresetName%%      Nombre del archivo del preset (%s)\n  %%BeforeAfter%%     Término que describe el momento en que se tomó la captura ('Before', 'After' o 'Overlay')\n  %%Date%%            Fecha con el formato '%s'\n  %%DateYear%%        Año\n  %%DateMonth%%       Mes\n  %%DateDay%%         Día\n  %%Time%%            Tiempo con el formato '%s'\n  %%TimeHour%%        Horas\n  %%TimeMinute%%      Minutos\n  %%TimeSecond%%      Segundos\n  %%TimeMS%%          Milisegundos\n  %%TargetPath%%      Ruta de la captura (%s)\n  %%TargetDir%%       Ruta de la carpeta de capturas (%s)\n  %%TargetFileName%%  Nombre de la captura (%s)\n  %%TargetExt%%       Extensión del archivo de la captura (%s)\n  %%TargetName%%      Nombre de la captura sin extensión (%s)\n  %%Count%%           Número de capturas tomadas en ésta sesión\n"
 19318 "Directorio de trabajo para el comando post guardado"
 39535 "Ocultar la ventana del comando post guardado"
 58617 "Menú & Estilo"
@@ -152,7 +154,6 @@ BEGIN
 36347 "Uso de memoria total: %lld.%03lld %s"
 42207 "Ajuste de línea"
 16256 "Limpiar log"
-21655 " Abrir la página web "
 40136 "Desarrollado y mantenido por crosire."
 49329 "Este projecto utiliza varias librerías de código abierto, sus licencias se enlistan debajo:"
 63124 "Se detectó actividad de red.\nSe desactivan todos los add-ons para prevenir explotaciones.\n\nSi éste no es un juego multijugador, usá la versión de ReShade con soporte total para add-ons."
@@ -165,6 +166,8 @@ BEGIN
 42082 "Autor:"
 64318 "Versión:"
 55572 "Descripción:"
+37002 "Página web:"
+15481 "Cuestiones:"
 5906 "Documentación de desarrollador abierto"
 17289 "Editar definiciones globales del preprocesador"
 2314 "Global"
@@ -177,7 +180,7 @@ BEGIN
 63336 "Definiciones del preprocesador"
 25263 "El efecto no pudo compilar después de éste cambio, se volverá al valor por defecto."
 52028 "No se encontraron archivos de efecto (.fx) en las carpetas de búsqueda%c"
-58782 "Verificá que esté configurada correctamente en los ajustes, despues hacé click en 'Recargar'"
+33649 "Verificá que esté configurada correctamente en los ajustes, despues hacé click en 'Recargar'"
 49902 "[%s] falló al compilar"
 2202 "Editar código fuente"
 58076 "Mostrar resultados compilados"
@@ -196,5 +199,5 @@ BEGIN
 
 END
 
-#endif    // Spanish (Spain) resources
+#endif    // Spanish (Spain, International Sort) resources
 /////////////////////////////////////////////////////////////////////////////

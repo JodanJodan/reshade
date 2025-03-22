@@ -7,15 +7,20 @@
 
 #include "d3d12_device.hpp"
 #include "d3d12_pipeline_library.hpp"
-#include "dll_log.hpp" // Include late to get HRESULT log overloads
+#include "dll_log.hpp" // Include late to get 'hr_to_string' helper function
 #include "com_utils.hpp"
 #include "hook_manager.hpp"
+
+thread_local bool g_in_d3d12_pipeline_creation = false;
 
 HRESULT STDMETHODCALLTYPE ID3D12PipelineLibrary_LoadGraphicsPipeline(ID3D12PipelineLibrary *pPipelineLibrary, LPCWSTR pName, const D3D12_GRAPHICS_PIPELINE_STATE_DESC *pDesc, REFIID riid, void **ppPipelineState)
 {
 	// Do not invoke 'create_pipeline' event, since it is not possible to modify the pipeline
 
 	HRESULT hr = reshade::hooks::call(ID3D12PipelineLibrary_LoadGraphicsPipeline, reshade::hooks::vtable_from_instance(pPipelineLibrary) + 9)(pPipelineLibrary, pName, pDesc, riid, ppPipelineState);
+	if (g_in_d3d12_pipeline_creation)
+		return hr;
+
 	if (SUCCEEDED(hr))
 	{
 		assert(pDesc != nullptr && ppPipelineState != nullptr);
@@ -35,7 +40,7 @@ HRESULT STDMETHODCALLTYPE ID3D12PipelineLibrary_LoadGraphicsPipeline(ID3D12Pipel
 	else
 	{
 		// 'E_INVALIDARG' is a common occurence indicating that the requested pipeline was not in the library
-		LOG(WARN) << "ID3D12PipelineLibrary::LoadGraphicsPipeline" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "ID3D12PipelineLibrary::LoadGraphicsPipeline failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -46,6 +51,9 @@ HRESULT STDMETHODCALLTYPE ID3D12PipelineLibrary_LoadComputePipeline(ID3D12Pipeli
 	// Do not invoke 'create_pipeline' event, since it is not possible to modify the pipeline
 
 	HRESULT hr = reshade::hooks::call(ID3D12PipelineLibrary_LoadComputePipeline, reshade::hooks::vtable_from_instance(pPipelineLibrary) + 10)(pPipelineLibrary, pName, pDesc, riid, ppPipelineState);
+	if (g_in_d3d12_pipeline_creation)
+		return hr;
+
 	if (SUCCEEDED(hr))
 	{
 		assert(pDesc != nullptr && ppPipelineState != nullptr);
@@ -64,7 +72,7 @@ HRESULT STDMETHODCALLTYPE ID3D12PipelineLibrary_LoadComputePipeline(ID3D12Pipeli
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "ID3D12PipelineLibrary::LoadComputePipeline" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "ID3D12PipelineLibrary::LoadComputePipeline failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -76,6 +84,9 @@ HRESULT STDMETHODCALLTYPE ID3D12PipelineLibrary1_LoadPipeline(ID3D12PipelineLibr
 	// Do not invoke 'create_pipeline' event, since it is not possible to modify the pipeline
 
 	HRESULT hr = reshade::hooks::call(ID3D12PipelineLibrary1_LoadPipeline, reshade::hooks::vtable_from_instance(pPipelineLibrary) + 13)(pPipelineLibrary, pName, pDesc, riid, ppPipelineState);
+	if (g_in_d3d12_pipeline_creation)
+		return hr; // Skip internal calls from 'ID3D12Device::CreatePipelineState'
+
 	if (SUCCEEDED(hr))
 	{
 		assert(pDesc != nullptr && ppPipelineState != nullptr);
@@ -94,7 +105,7 @@ HRESULT STDMETHODCALLTYPE ID3D12PipelineLibrary1_LoadPipeline(ID3D12PipelineLibr
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "ID3D12PipelineLibrary1::LoadPipeline" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "ID3D12PipelineLibrary1::LoadPipeline failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 

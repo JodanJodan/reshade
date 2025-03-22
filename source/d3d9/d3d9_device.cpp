@@ -8,7 +8,7 @@
 #include "d3d9_swapchain.hpp"
 #include "d3d9on12_device.hpp"
 #include "d3d9_impl_type_convert.hpp"
-#include "dll_log.hpp" // Include late to get HRESULT log overloads
+#include "dll_log.hpp" // Include late to get 'hr_to_string' helper function
 #include "com_utils.hpp"
 #include "hook_manager.hpp"
 #include "addon_manager.hpp"
@@ -26,11 +26,13 @@ const reshade::api::subresource_box *convert_rect_to_box(const RECT *rect, resha
 	if (rect == nullptr)
 		return nullptr;
 
-	box.left = rect->left;
-	box.top = rect->top;
+	assert(rect->left >= 0 && rect->top >= 0 && rect->right >= 0 && rect->bottom >= 0);
+
+	box.left = static_cast<uint32_t>(rect->left);
+	box.top = static_cast<uint32_t>(rect->top);
 	box.front = 0;
-	box.right = rect->right;
-	box.bottom = rect->bottom;
+	box.right = static_cast<uint32_t>(rect->right);
+	box.bottom = static_cast<uint32_t>(rect->bottom);
 	box.back = 1;
 
 	return &box;
@@ -40,11 +42,13 @@ const reshade::api::subresource_box *convert_rect_to_box(const POINT *point, LON
 	if (point == nullptr)
 		return nullptr;
 
-	box.left = point->x;
-	box.top = point->y;
+	assert(point->x >= 0 && point->y >= 0 && width >= 0 && height >= 0);
+
+	box.left = static_cast<uint32_t>(point->x);
+	box.top = static_cast<uint32_t>(point->y);
 	box.front = 0;
-	box.right = point->x + width;
-	box.bottom = point->y + height;
+	box.right = static_cast<uint32_t>(point->x + width);
+	box.bottom = static_cast<uint32_t>(point->y + height);
 	box.back = 1;
 
 	return &box;
@@ -92,7 +96,7 @@ bool Direct3DDevice9::check_and_upgrade_interface(REFIID riid)
 		if (FAILED(_orig->QueryInterface(IID_PPV_ARGS(&new_interface))))
 			return false;
 #if RESHADE_VERBOSE_LOG
-		LOG(DEBUG) << "Upgrading IDirect3DDevice9 object " << this << " to IDirect3DDevice9Ex.";
+		reshade::log::message(reshade::log::level::debug, "Upgrading IDirect3DDevice9 object %p to IDirect3DDevice9Ex.", this);
 #endif
 		_orig->Release();
 		_orig = new_interface;
@@ -145,7 +149,7 @@ ULONG   STDMETHODCALLTYPE Direct3DDevice9::Release()
 	// Borderlands 2 is not counting references correctly and will release the device before 'IDirect3DDevice9::Reset' calls, so try and detect this and prevent deletion
 	if (_resource_ref > 5)
 	{
-		LOG(WARN) << "Reference count for " << "IDirect3DDevice9" << (extended_interface ? "Ex" : "") << " object " << this << " (" << orig << ") is inconsistent! Leaking resources ...";
+		reshade::log::message(reshade::log::level::warning, "Reference count for IDirect3DDevice9%s object %p (%p) is inconsistent! Leaking resources ...", extended_interface ? "Ex" : "", this, orig);
 		_ref = 1;
 		// Always return zero in case a game is trying to release all references in a while loop, which would otherwise run indefinitely
 		return 0;
@@ -164,7 +168,7 @@ ULONG   STDMETHODCALLTYPE Direct3DDevice9::Release()
 	assert(_additional_swapchains.empty());
 
 #if RESHADE_VERBOSE_LOG
-	LOG(DEBUG) << "Destroying " << "IDirect3DDevice9" << (extended_interface ? "Ex" : "") << " object " << this << " (" << orig << ").";
+	reshade::log::message(reshade::log::level::debug, "Destroying IDirect3DDevice9%s object %p (%p).", extended_interface ? "Ex" : "", this, orig);
 #endif
 	// Only call destructor and do not yet free memory before calling final 'Release' below
 	// Some resources may still be alive here (e.g. because of a state block from the Steam overlay, which is released on device destruction), which will then call the resource destruction callbacks during the final 'Release' and still access this memory
@@ -172,7 +176,7 @@ ULONG   STDMETHODCALLTYPE Direct3DDevice9::Release()
 
 	const ULONG ref_orig = orig->Release();
 	if (ref_orig != 0) // Verify internal reference count
-		LOG(WARN) << "Reference count for " << "IDirect3DDevice9" << (extended_interface ? "Ex" : "") << " object " << this << " (" << orig << ") is inconsistent (" << ref_orig << ").";
+		reshade::log::message(reshade::log::level::warning, "Reference count for IDirect3DDevice9%s object %p (%p) is inconsistent (%lu).", extended_interface ? "Ex" : "", this, orig, ref_orig);
 	else
 		operator delete(this, sizeof(Direct3DDevice9));
 	return 0;
@@ -202,7 +206,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::GetDisplayMode(UINT iSwapChain, D3DDI
 {
 	if (iSwapChain != 0)
 	{
-		LOG(WARN) << "Access to multi-head swap chain at index " << iSwapChain << " is unsupported.";
+		reshade::log::message(reshade::log::level::warning, "Access to multi-head swap chain at index %u is unsupported.", iSwapChain);
 		return D3DERR_INVALIDCALL;
 	}
 
@@ -226,7 +230,10 @@ BOOL    STDMETHODCALLTYPE Direct3DDevice9::ShowCursor(BOOL bShow)
 }
 HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateAdditionalSwapChain(D3DPRESENT_PARAMETERS *pPresentationParameters, IDirect3DSwapChain9 **ppSwapChain)
 {
-	LOG(INFO) << "Redirecting " << "IDirect3DDevice9::CreateAdditionalSwapChain" << '(' << "this = " << this << ", pPresentationParameters = " << pPresentationParameters << ", ppSwapChain = " << ppSwapChain << ')' << " ...";
+	reshade::log::message(
+		reshade::log::level::info,
+		"Redirecting IDirect3DDevice9::CreateAdditionalSwapChain(this = %p, pPresentationParameters = %p, ppSwapChain = %p) ...",
+		this, pPresentationParameters, ppSwapChain);
 
 	if (pPresentationParameters == nullptr)
 		return D3DERR_INVALIDCALL;
@@ -251,12 +258,12 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateAdditionalSwapChain(D3DPRESENT_
 		*ppSwapChain = swapchain_proxy;
 
 #if RESHADE_VERBOSE_LOG
-		LOG(DEBUG) << "Returning " << "IDirect3DSwapChain9" << " object " << swapchain_proxy << " (" << swapchain_proxy->_orig << ").";
+		reshade::log::message(reshade::log::level::debug, "Returning IDirect3DSwapChain9 object %p (%p).", swapchain_proxy, swapchain_proxy->_orig);
 #endif
 	}
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9::CreateAdditionalSwapChain" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9::CreateAdditionalSwapChain failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 
 	return hr;
@@ -265,7 +272,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::GetSwapChain(UINT iSwapChain, IDirect
 {
 	if (iSwapChain != 0)
 	{
-		LOG(WARN) << "Access to multi-head swap chain at index " << iSwapChain << " is unsupported.";
+		reshade::log::message(reshade::log::level::warning, "Access to multi-head swap chain at index %u is unsupported.", iSwapChain);
 		return D3DERR_INVALIDCALL;
 	}
 
@@ -283,7 +290,10 @@ UINT    STDMETHODCALLTYPE Direct3DDevice9::GetNumberOfSwapChains()
 }
 HRESULT STDMETHODCALLTYPE Direct3DDevice9::Reset(D3DPRESENT_PARAMETERS *pPresentationParameters)
 {
-	LOG(INFO) << "Redirecting " << "IDirect3DDevice9::Reset" << '(' << "this = " << this << ", pPresentationParameters = " << pPresentationParameters << ')' << " ...";
+	reshade::log::message(
+		reshade::log::level::info,
+		"Redirecting IDirect3DDevice9::Reset(this = %p, pPresentationParameters = %p) ...",
+		this, pPresentationParameters);
 
 	if (pPresentationParameters == nullptr)
 		return D3DERR_INVALIDCALL;
@@ -292,7 +302,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::Reset(D3DPRESENT_PARAMETERS *pPresent
 	dump_and_modify_present_parameters(pp, _d3d.get(), _cp.AdapterOrdinal, _cp.hFocusWindow);
 
 	// Release all resources before performing reset
-	_implicit_swapchain->on_reset();
+	_implicit_swapchain->on_reset(true);
 	on_reset();
 
 	assert(!g_in_d3d9_runtime && !g_in_dxgi_runtime);
@@ -309,11 +319,11 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::Reset(D3DPRESENT_PARAMETERS *pPresent
 	if (SUCCEEDED(hr))
 	{
 		on_init();
-		_implicit_swapchain->on_init();
+		_implicit_swapchain->on_init(true);
 	}
 	else
 	{
-		LOG(ERROR) << "IDirect3DDevice9::Reset" << " failed with error code " << hr << '!';
+		reshade::log::message(reshade::log::level::error, "IDirect3DDevice9::Reset failed with error code %s!", reshade::log::hr_to_string(hr).c_str());
 
 		// Initialize device implementation even when reset failed, so that 'init_device', 'init_command_list' and 'init_command_queue' events are still called
 		on_init();
@@ -335,7 +345,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::GetBackBuffer(UINT iSwapChain, UINT i
 {
 	if (iSwapChain != 0)
 	{
-		LOG(WARN) << "Access to multi-head swap chain at index " << iSwapChain << " is unsupported.";
+		reshade::log::message(reshade::log::level::warning, "Access to multi-head swap chain at index %u is unsupported.", iSwapChain);
 		return D3DERR_INVALIDCALL;
 	}
 
@@ -345,7 +355,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::GetRasterStatus(UINT iSwapChain, D3DR
 {
 	if (iSwapChain != 0)
 	{
-		LOG(WARN) << "Access to multi-head swap chain at index " << iSwapChain << " is unsupported.";
+		reshade::log::message(reshade::log::level::info, "Access to multi-head swap chain at index %u is unsupported.", iSwapChain);
 		return D3DERR_INVALIDCALL;
 	}
 
@@ -359,7 +369,7 @@ void    STDMETHODCALLTYPE Direct3DDevice9::SetGammaRamp(UINT iSwapChain, DWORD F
 {
 	if (iSwapChain != 0)
 	{
-		LOG(WARN) << "Access to multi-head swap chain at index " << iSwapChain << " is unsupported.";
+		reshade::log::message(reshade::log::level::info, "Access to multi-head swap chain at index %u is unsupported.", iSwapChain);
 		return;
 	}
 
@@ -369,7 +379,7 @@ void    STDMETHODCALLTYPE Direct3DDevice9::GetGammaRamp(UINT iSwapChain, D3DGAMM
 {
 	if (iSwapChain != 0)
 	{
-		LOG(WARN) << "Access to multi-head swap chain at index " << iSwapChain << " is unsupported.";
+		reshade::log::message(reshade::log::level::info, "Access to multi-head swap chain at index %u is unsupported.", iSwapChain);
 		return;
 	}
 
@@ -474,7 +484,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateTexture(UINT Width, UINT Height
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9::CreateTexture" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9::CreateTexture failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -554,7 +564,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateVolumeTexture(UINT Width, UINT 
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9::CreateVolumeTexture" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9::CreateVolumeTexture failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -665,7 +675,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateCubeTexture(UINT EdgeLength, UI
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9::CreateCubeTexture" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9::CreateCubeTexture failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -717,7 +727,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateVertexBuffer(UINT Length, DWORD
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9::CreateVertexBuffer" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9::CreateVertexBuffer failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -768,7 +778,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateIndexBuffer(UINT Length, DWORD 
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9::CreateIndexBuffer" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9::CreateIndexBuffer failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -846,7 +856,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateRenderTarget(UINT Width, UINT H
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9::CreateRenderTarget" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9::CreateRenderTarget failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -913,7 +923,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateDepthStencilSurface(UINT Width,
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9::CreateDepthStencilSurface" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9::CreateDepthStencilSurface failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -988,7 +998,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::GetFrontBufferData(UINT iSwapChain, I
 {
 	if (iSwapChain != 0)
 	{
-		LOG(WARN) << "Access to multi-head swap chain at index " << iSwapChain << " is unsupported.";
+		reshade::log::message(reshade::log::level::warning, "Access to multi-head swap chain at index %u is unsupported.", iSwapChain);
 		return D3DERR_INVALIDCALL;
 	}
 
@@ -1035,7 +1045,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::StretchRect(IDirect3DSurface9 *pSrcSu
 
 			if (reshade::invoke_addon_event<reshade::addon_event::resolve_texture_region>(this,
 					src_resource, src_subresource, convert_rect_to_box(pSrcRect, src_box),
-					dst_resource, dst_subresource, pDstRect != nullptr ? pDstRect->left : 0, pDstRect != nullptr ? pDstRect->top : 0, 0,
+					dst_resource, dst_subresource, static_cast<uint32_t>(pDstRect != nullptr ? pDstRect->left : 0), static_cast<uint32_t>(pDstRect != nullptr ? pDstRect->top : 0), 0,
 					reshade::d3d9::convert_format(desc.Format)))
 				return D3D_OK;
 		}
@@ -1114,7 +1124,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateOffscreenPlainSurface(UINT Widt
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9::CreateOffscreenPlainSurface" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9::CreateOffscreenPlainSurface failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -1835,7 +1845,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateVertexDeclaration(const D3DVERT
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9::CreateVertexDeclaration" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9::CreateVertexDeclaration failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -1913,7 +1923,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateVertexShader(const DWORD *pFunc
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9::CreateVertexShader" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9::CreateVertexShader failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -2097,7 +2107,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreatePixelShader(const DWORD *pFunct
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9::CreatePixelShader" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9::CreatePixelShader failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -2249,7 +2259,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::WaitForVBlank(UINT iSwapChain)
 {
 	if (iSwapChain != 0)
 	{
-		LOG(WARN) << "Access to multi-head swap chain at index " << iSwapChain << " is unsupported.";
+		reshade::log::message(reshade::log::level::warning, "Access to multi-head swap chain at index %u is unsupported.", iSwapChain);
 		return D3DERR_INVALIDCALL;
 	}
 
@@ -2350,7 +2360,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateRenderTargetEx(UINT Width, UINT
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9Ex::CreateRenderTargetEx" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9Ex::CreateRenderTargetEx failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -2418,7 +2428,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateOffscreenPlainSurfaceEx(UINT Wi
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9Ex::CreateOffscreenPlainSurfaceEx" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9Ex::CreateOffscreenPlainSurfaceEx failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -2487,7 +2497,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::CreateDepthStencilSurfaceEx(UINT Widt
 #if RESHADE_VERBOSE_LOG
 	else
 	{
-		LOG(WARN) << "IDirect3DDevice9Ex::CreateDepthStencilSurfaceEx" << " failed with error code " << hr << '.';
+		reshade::log::message(reshade::log::level::warning, "IDirect3DDevice9Ex::CreateDepthStencilSurfaceEx failed with error code %s.", reshade::log::hr_to_string(hr).c_str());
 	}
 #endif
 
@@ -2497,7 +2507,10 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::ResetEx(D3DPRESENT_PARAMETERS *pPrese
 {
 	assert(_extended_interface);
 
-	LOG(INFO) << "Redirecting " << "IDirect3DDevice9Ex::ResetEx" << '(' << "this = " << this << ", pPresentationParameters = " << pPresentationParameters << ", pFullscreenDisplayMode = " << pFullscreenDisplayMode << ')' << " ...";
+	reshade::log::message(
+		reshade::log::level::info,
+		"Redirecting IDirect3DDevice9Ex::ResetEx(this = %p, pPresentationParameters = %p, pFullscreenDisplayMode = %p) ...",
+		this, pPresentationParameters, pFullscreenDisplayMode);
 
 	if (pPresentationParameters == nullptr)
 		return D3DERR_INVALIDCALL;
@@ -2509,7 +2522,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::ResetEx(D3DPRESENT_PARAMETERS *pPrese
 	dump_and_modify_present_parameters(pp, fullscreen_mode, _d3d.get(), _cp.AdapterOrdinal, _cp.hFocusWindow);
 
 	// Release all resources before performing reset
-	_implicit_swapchain->on_reset();
+	_implicit_swapchain->on_reset(true);
 	on_reset();
 
 	assert(!g_in_d3d9_runtime && !g_in_dxgi_runtime);
@@ -2526,11 +2539,11 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::ResetEx(D3DPRESENT_PARAMETERS *pPrese
 	if (SUCCEEDED(hr))
 	{
 		on_init();
-		_implicit_swapchain->on_init();
+		_implicit_swapchain->on_init(true);
 	}
 	else
 	{
-		LOG(ERROR) << "IDirect3DDevice9Ex::ResetEx" << " failed with error code " << hr << '!';
+		reshade::log::message(reshade::log::level::error, "IDirect3DDevice9Ex::ResetEx failed with error code %s!", reshade::log::hr_to_string(hr).c_str());
 
 		// Initialize device implementation even when reset failed, so that 'init_device', 'init_command_list' and 'init_command_queue' events are still called
 		on_init();
@@ -2542,7 +2555,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::GetDisplayModeEx(UINT iSwapChain, D3D
 {
 	if (iSwapChain != 0)
 	{
-		LOG(WARN) << "Access to multi-head swap chain at index " << iSwapChain << " is unsupported.";
+		reshade::log::message(reshade::log::level::warning, "Access to multi-head swap chain at index %u is unsupported.", iSwapChain);
 		return D3DERR_INVALIDCALL;
 	}
 

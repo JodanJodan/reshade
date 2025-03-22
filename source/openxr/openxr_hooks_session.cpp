@@ -52,7 +52,7 @@ static lockfree_linear_map<XrSwapchain, openxr_swapchain_data, 16> s_openxr_swap
 
 XrResult XRAPI_CALL xrCreateSession(XrInstance instance, const XrSessionCreateInfo *pCreateInfo, XrSession *pSession)
 {
-	LOG(INFO) << "Redirecting " << "xrCreateSession" << '(' << "instance = " << instance << ", pCreateInfo = " << pCreateInfo << ", pSession = " << pSession << ')' << " ...";
+	reshade::log::message(reshade::log::level::info, "Redirecting xrCreateSession(instance = %" PRIx64 ", pCreateInfo = %p, pSession = %p) ...", instance, pCreateInfo, pSession);
 
 	assert(pCreateInfo != nullptr && pSession != nullptr);
 
@@ -62,7 +62,7 @@ XrResult XRAPI_CALL xrCreateSession(XrInstance instance, const XrSessionCreateIn
 	const XrResult result = trampoline(instance, pCreateInfo, pSession);
 	if (XR_FAILED(result))
 	{
-		LOG(WARN) << "xrCreateSession" << " failed with error code " << result << '.';
+		reshade::log::message(reshade::log::level::warning, "xrCreateSession failed with error code %d.", static_cast<int>(result));
 		return result;
 	}
 
@@ -90,7 +90,7 @@ XrResult XRAPI_CALL xrCreateSession(XrInstance instance, const XrSessionCreateIn
 			}
 			else
 			{
-				LOG(WARN) << "Skipping OpenXR session because it was created without a proxy Direct3D 11 device.";
+				reshade::log::message(reshade::log::level::warning, "Skipping OpenXR session because it was created without a proxy Direct3D 11 device.");
 			}
 		}
 		else
@@ -106,18 +106,18 @@ XrResult XRAPI_CALL xrCreateSession(XrInstance instance, const XrSessionCreateIn
 			}
 			else
 			{
-				LOG(WARN) << "Skipping OpenXR session because it was created without a proxy Direct3D 12 device.";
+				reshade::log::message(reshade::log::level::warning, "Skipping OpenXR session because it was created without a proxy Direct3D 12 device.");
 			}
 		}
 		else
 		if (const auto binding_opengl = find_in_structure_chain<XrGraphicsBindingOpenGLWin32KHR>(pCreateInfo, XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR))
 		{
-			extern thread_local reshade::opengl::device_context_impl *g_current_context;
-			if (g_current_context != nullptr)
+			extern thread_local reshade::opengl::device_context_impl *g_opengl_context;
+			if (g_opengl_context != nullptr)
 			{
-				assert(reinterpret_cast<HGLRC>(g_current_context->get_native()) == binding_opengl->hGLRC);
+				assert(reinterpret_cast<HGLRC>(g_opengl_context->get_native()) == binding_opengl->hGLRC);
 
-				swapchain_impl = new reshade::openxr::swapchain_impl(g_current_context->get_device(), g_current_context, *pSession);
+				swapchain_impl = new reshade::openxr::swapchain_impl(g_opengl_context->get_device(), g_opengl_context, *pSession);
 			}
 		}
 		else
@@ -129,6 +129,7 @@ XrResult XRAPI_CALL xrCreateSession(XrInstance instance, const XrSessionCreateIn
 			{
 				VkQueue queue_handle = VK_NULL_HANDLE;
 				device->_dispatch_table.GetDeviceQueue(binding_vulkan->device, binding_vulkan->queueFamilyIndex, binding_vulkan->queueIndex, &queue_handle);
+				assert(queue_handle != VK_NULL_HANDLE);
 
 				reshade::vulkan::command_queue_impl *queue = nullptr;
 				if (const auto queue_it = std::find_if(device->_queues.cbegin(), device->_queues.cend(),
@@ -143,26 +144,26 @@ XrResult XRAPI_CALL xrCreateSession(XrInstance instance, const XrSessionCreateIn
 			}
 			else
 			{
-				LOG(WARN) << "Skipping OpenXR session because it was created without a known Vulkan device.";
+				reshade::log::message(reshade::log::level::warning, "Skipping OpenXR session because it was created without a known Vulkan device.");
 			}
 		}
 	}
 	else
 	{
-		LOG(WARN) << "Skipping OpenXR session because the system does not support the stereo view configuration.";
+		reshade::log::message(reshade::log::level::warning, "Skipping OpenXR session because the system does not support the stereo view configuration.");
 	}
 
 	s_openxr_sessions.emplace(*pSession, openxr_session_data { &dispatch_table, swapchain_impl });
 
 #if RESHADE_VERBOSE_LOG
-	LOG(DEBUG) << "Returning OpenXR session " << *pSession << '.';
+	reshade::log::message(reshade::log::level::debug, "Returning OpenXR session %" PRIx64 ".", *pSession);
 #endif
 	return result;
 }
 
 XrResult XRAPI_CALL xrDestroySession(XrSession session)
 {
-	LOG(INFO) << "Redirecting " << "xrDestroySession" << '(' << "session = " << session << ')' << " ...";
+	reshade::log::message(reshade::log::level::info, "Redirecting xrDestroySession(session = %" PRIx64 ") ...", session);
 
 	assert(session != XR_NULL_HANDLE);
 
@@ -178,7 +179,7 @@ XrResult XRAPI_CALL xrDestroySession(XrSession session)
 
 XrResult XRAPI_CALL xrCreateSwapchain(XrSession session, const XrSwapchainCreateInfo *pCreateInfo, XrSwapchain *pSwapchain)
 {
-	LOG(INFO) << "Redirecting " << "xrCreateSwapchain" << '(' << "session = " << session << ", pCreateInfo = " << pCreateInfo << ", pSwapchain = " << pSwapchain << ')' << " ...";
+	reshade::log::message(reshade::log::level::info, "Redirecting xrCreateSwapchain(session = %" PRIx64 ", pCreateInfo = %p, pSwapchain = %p) ...", session, pCreateInfo, pSwapchain);
 
 	const openxr_session_data &data = s_openxr_sessions.at(session);
 	GET_DISPATCH_PTR_FROM(CreateSwapchain, data.dispatch_table);
@@ -192,7 +193,7 @@ XrResult XRAPI_CALL xrCreateSwapchain(XrSession session, const XrSwapchainCreate
 	const XrResult result = trampoline(session, &create_info, pSwapchain);
 	if (XR_FAILED(result))
 	{
-		LOG(WARN) << "xrCreateSwapchain" << " failed with error code " << result << '.';
+		reshade::log::message(reshade::log::level::warning, "xrCreateSwapchain failed with error code %d.", static_cast<int>(result));
 		return result;
 	}
 
@@ -247,14 +248,14 @@ XrResult XRAPI_CALL xrCreateSwapchain(XrSession session, const XrSwapchainCreate
 	s_openxr_swapchains.emplace(*pSwapchain, openxr_swapchain_data { data.dispatch_table, create_info.createFlags, std::move(images) });
 
 #if RESHADE_VERBOSE_LOG
-	LOG(DEBUG) << "Returning OpenXR swap chain " << *pSwapchain << '.';
+	reshade::log::message(reshade::log::level::debug, "Returning OpenXR swap chain %" PRIx64 ".", *pSwapchain);
 #endif
 	return result;
 }
 
 XrResult XRAPI_CALL xrDestroySwapchain(XrSwapchain swapchain)
 {
-	LOG(INFO) << "Redirecting " << "xrDestroySwapchain" << '(' << "swapchain = " << swapchain << ')' << " ...";
+	reshade::log::message(reshade::log::level::info, "Redirecting xrDestroySwapchain(swapchain = %" PRIx64 ") ...", swapchain);
 
 	const openxr_swapchain_data &data = s_openxr_swapchains.at(swapchain);
 	GET_DISPATCH_PTR_FROM(DestroySwapchain, data.dispatch_table);
@@ -324,12 +325,14 @@ XrResult XRAPI_CALL xrEndFrame(XrSession session, const XrFrameEndInfo *frameEnd
 
 					view_textures[view_count] = swapchain_data.surface_images[swapchain_data.last_released_index];
 
+					assert(sub_image.imageRect.offset.x >= 0 && sub_image.imageRect.offset.y >= 0 && sub_image.imageRect.extent.width >= 0 && sub_image.imageRect.extent.height >= 0);
+
 					reshade::api::subresource_box &view_box = view_boxes[view_count];
-					view_box.left = sub_image.imageRect.offset.x;
-					view_box.top = sub_image.imageRect.offset.y;
+					view_box.left = static_cast<uint32_t>(sub_image.imageRect.offset.x);
+					view_box.top = static_cast<uint32_t>(sub_image.imageRect.offset.y);
 					view_box.front = 0;
-					view_box.right = sub_image.imageRect.offset.x + sub_image.imageRect.extent.width;
-					view_box.bottom = sub_image.imageRect.offset.y + sub_image.imageRect.extent.height;
+					view_box.right = static_cast<uint32_t>(sub_image.imageRect.offset.x + sub_image.imageRect.extent.width);
+					view_box.bottom = static_cast<uint32_t>(sub_image.imageRect.offset.y + sub_image.imageRect.extent.height);
 					view_box.back = 1;
 
 					view_layers[view_count] = sub_image.imageArrayIndex;

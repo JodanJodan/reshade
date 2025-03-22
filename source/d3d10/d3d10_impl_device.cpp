@@ -10,12 +10,7 @@
 #include <algorithm> // std::copy_n
 #include <utf8/unchecked.h>
 
-reshade::d3d10::device_impl::device_impl(ID3D10Device1 *device) :
-	api_object_impl(device)
-{
-}
-
-static const com_ptr<IDXGIAdapter> get_adapter_for_device(ID3D10Device1 *device, DXGI_ADAPTER_DESC &adapter_desc)
+static auto adapter_from_device(ID3D10Device *device, DXGI_ADAPTER_DESC *adapter_desc = nullptr) -> const com_ptr<IDXGIAdapter>
 {
 	com_ptr<IDXGIDevice> dxgi_device;
 	if (SUCCEEDED(device->QueryInterface(&dxgi_device)))
@@ -23,7 +18,8 @@ static const com_ptr<IDXGIAdapter> get_adapter_for_device(ID3D10Device1 *device,
 		com_ptr<IDXGIAdapter> dxgi_adapter;
 		if (SUCCEEDED(dxgi_device->GetAdapter(&dxgi_adapter)))
 		{
-			dxgi_adapter->GetDesc(&adapter_desc);
+			if (adapter_desc != nullptr)
+				dxgi_adapter->GetDesc(adapter_desc);
 			return dxgi_adapter;
 		}
 	}
@@ -31,17 +27,20 @@ static const com_ptr<IDXGIAdapter> get_adapter_for_device(ID3D10Device1 *device,
 	return nullptr;
 }
 
+reshade::d3d10::device_impl::device_impl(ID3D10Device1 *device) :
+	api_object_impl(device)
+{
+}
+
 bool reshade::d3d10::device_impl::get_property(api::device_properties property, void *data) const
 {
-	DXGI_ADAPTER_DESC adapter_desc;
-
 	switch (property)
 	{
 	case api::device_properties::api_version:
 		*static_cast<uint32_t *>(data) = _orig->GetFeatureLevel();
 		return true;
 	case api::device_properties::driver_version:
-		if (const auto dxgi_adapter = get_adapter_for_device(_orig, adapter_desc))
+		if (const auto dxgi_adapter = adapter_from_device(_orig))
 		{
 			LARGE_INTEGER umd_version = {};
 			dxgi_adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd_version);
@@ -50,21 +49,24 @@ bool reshade::d3d10::device_impl::get_property(api::device_properties property, 
 		}
 		return false;
 	case api::device_properties::vendor_id:
-		if (get_adapter_for_device(_orig, adapter_desc))
+		if (DXGI_ADAPTER_DESC adapter_desc;
+			adapter_from_device(_orig, &adapter_desc))
 		{
 			*static_cast<uint32_t *>(data) = adapter_desc.VendorId;
 			return true;
 		}
 		return false;
 	case api::device_properties::device_id:
-		if (get_adapter_for_device(_orig, adapter_desc))
+		if (DXGI_ADAPTER_DESC adapter_desc;
+			adapter_from_device(_orig, &adapter_desc))
 		{
 			*static_cast<uint32_t *>(data) = adapter_desc.DeviceId;
 			return true;
 		}
 		return false;
 	case api::device_properties::description:
-		if (get_adapter_for_device(_orig, adapter_desc))
+		if (DXGI_ADAPTER_DESC adapter_desc;
+			adapter_from_device(_orig, &adapter_desc))
 		{
 			static_assert(std::size(adapter_desc.Description) <= 256);
 			utf8::unchecked::utf16to8(adapter_desc.Description, adapter_desc.Description + std::size(adapter_desc.Description), static_cast<char *>(data));
@@ -524,8 +526,10 @@ void reshade::d3d10::device_impl::unmap_texture_region(api::resource resource, u
 void reshade::d3d10::device_impl::update_buffer_region(const void *data, api::resource resource, uint64_t offset, uint64_t size)
 {
 	assert(resource != 0);
-	assert(data != nullptr);
 	assert(offset <= std::numeric_limits<UINT>::max() && size <= std::numeric_limits<UINT>::max());
+
+	if (data == nullptr)
+		return;
 
 	const D3D10_BOX box = { static_cast<UINT>(offset), 0, 0, static_cast<UINT>(offset + size), 1, 1 };
 
@@ -534,7 +538,9 @@ void reshade::d3d10::device_impl::update_buffer_region(const void *data, api::re
 void reshade::d3d10::device_impl::update_texture_region(const api::subresource_data &data, api::resource resource, uint32_t subresource, const api::subresource_box *box)
 {
 	assert(resource != 0);
-	assert(data.data != nullptr);
+
+	if (data.data == nullptr)
+		return;
 
 	_orig->UpdateSubresource(reinterpret_cast<ID3D10Resource *>(resource.handle), subresource, reinterpret_cast<const D3D10_BOX *>(box), data.data, data.row_pitch, data.slice_pitch);
 }
@@ -924,9 +930,8 @@ bool reshade::d3d10::device_impl::create_pipeline_layout(uint32_t param_count, c
 				{
 					const uint32_t distance = range.binding - merged_range.binding;
 
-					if ((range.dx_register_index - merged_range.dx_register_index) != distance)
-						return false;
-					assert(merged_range.count <= distance);
+					if ((range.dx_register_index - merged_range.dx_register_index) != distance || merged_range.count > distance)
+						return false; // Overlapping ranges are not supported
 
 					merged_range.count = distance + range.count;
 					merged_range.visibility |= range.visibility;
@@ -935,9 +940,8 @@ bool reshade::d3d10::device_impl::create_pipeline_layout(uint32_t param_count, c
 				{
 					const uint32_t distance = merged_range.binding - range.binding;
 
-					if ((merged_range.dx_register_index - range.dx_register_index) != distance)
+					if ((merged_range.dx_register_index - range.dx_register_index) != distance || range.count > distance)
 						return false;
-					assert(range.count <= distance);
 
 					merged_range.binding = range.binding;
 					merged_range.dx_register_index = range.dx_register_index;
@@ -1096,21 +1100,25 @@ void reshade::d3d10::device_impl::update_descriptor_tables(uint32_t count, const
 	}
 }
 
-bool reshade::d3d10::device_impl::create_query_heap(api::query_type type, uint32_t size, api::query_heap *out_heap)
+bool reshade::d3d10::device_impl::create_query_heap(api::query_type type, uint32_t count, api::query_heap *out_heap)
 {
+	*out_heap = { 0 };
+
+	if (type >= api::query_type::acceleration_structure_size)
+		return false;
+
 	const auto impl = new query_heap_impl();
-	impl->queries.resize(size);
+	impl->queries.resize(count);
 
 	D3D10_QUERY_DESC internal_desc = {};
 	internal_desc.Query = convert_query_type(type);
 
-	for (uint32_t i = 0; i < size; ++i)
+	for (uint32_t i = 0; i < count; ++i)
 	{
 		if (FAILED(_orig->CreateQuery(&internal_desc, &impl->queries[i])))
 		{
 			delete impl;
 
-			*out_heap = { 0 };
 			return false;
 		}
 	}
@@ -1139,20 +1147,17 @@ bool reshade::d3d10::device_impl::get_query_heap_results(api::query_heap heap, u
 	return true;
 }
 
-// WKPDID_D3DDebugObjectName
-inline constexpr GUID s_debug_object_name_guid = { 0x429b8c22, 0x9188, 0x4b0c, { 0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00} };
-
 void reshade::d3d10::device_impl::set_resource_name(api::resource resource, const char *name)
 {
 	assert(resource != 0);
 
-	reinterpret_cast<ID3D10DeviceChild *>(resource.handle)->SetPrivateData(s_debug_object_name_guid, static_cast<UINT>(std::strlen(name)), name);
+	reinterpret_cast<ID3D10DeviceChild *>(resource.handle)->SetPrivateData(WKPDID_D3DDebugObjectName, static_cast<UINT>(std::strlen(name)), name);
 }
 void reshade::d3d10::device_impl::set_resource_view_name(api::resource_view view, const char *name)
 {
 	assert(view != 0);
 
-	reinterpret_cast<ID3D10DeviceChild *>(view.handle)->SetPrivateData(s_debug_object_name_guid, static_cast<UINT>(std::strlen(name)), name);
+	reinterpret_cast<ID3D10DeviceChild *>(view.handle)->SetPrivateData(WKPDID_D3DDebugObjectName, static_cast<UINT>(std::strlen(name)), name);
 }
 
 bool reshade::d3d10::device_impl::create_fence(uint64_t initial_value, api::fence_flags flags, api::fence *out_fence, HANDLE *shared_handle)

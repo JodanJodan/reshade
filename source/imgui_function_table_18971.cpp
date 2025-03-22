@@ -9,206 +9,203 @@
 #include <new>
 #include "imgui_function_table_18971.hpp"
 
-static void convert(const imgui_io_19000 &new_io, imgui_io_18971 &io)
+namespace
 {
-	io.ConfigFlags = new_io.ConfigFlags;
-	io.BackendFlags = new_io.BackendFlags;
-	io.DisplaySize = new_io.DisplaySize;
-	io.DeltaTime = new_io.DeltaTime;
-	io.IniSavingRate = new_io.IniSavingRate;
-	io.IniFilename = new_io.IniFilename;
-	io.LogFilename = new_io.LogFilename;
-	io.UserData = new_io.UserData;
+	auto convert_key(ImGuiKey old_value) -> ImGuiKey
+	{
+		if (old_value <= ImGuiKey_F12)
+			return old_value;
+		if (old_value <= (ImGuiKey_KeypadEqual - (ImGuiKey_F24 - ImGuiKey_F12)))
+			return static_cast<ImGuiKey>(old_value - (ImGuiKey_F24 - ImGuiKey_F12));
+		else
+			return static_cast<ImGuiKey>(old_value - (ImGuiKey_F24 - ImGuiKey_F12) - (ImGuiKey_AppForward - ImGuiKey_KeypadEqual));
+	}
+	auto convert_style_var(ImGuiStyleVar old_value) -> ImGuiStyleVar
+	{
+		if (old_value <= 22) // ImGuiStyleVar_TabRounding
+			return old_value;
+		else
+			return old_value + 1;
+	}
 
-	// It's not safe to access the internal fields of 'FontAtlas'
-	io.Fonts = new_io.Fonts;
-	io.FontGlobalScale = new_io.FontGlobalScale;
-	io.FontAllowUserScaling = new_io.FontAllowUserScaling;
-	io.FontDefault = nullptr;
-	io.DisplayFramebufferScale = new_io.DisplayFramebufferScale;
+	auto convert_window_flags(ImGuiWindowFlags old_flags) -> ImGuiWindowFlags
+	{
+		ImGuiWindowFlags new_flags = old_flags & 0xFFC0FFFF;
+		if (old_flags & (1 << 18)) // ImGuiWindowFlags_NoNavInputs
+			new_flags |= 1 << 16;
+		if (old_flags & (1 << 19)) // ImGuiWindowFlags_NoNavFocus
+			new_flags |= 1 << 17;
+		if (old_flags & (1 << 20)) // ImGuiWindowFlags_UnsavedDocument
+			new_flags |= 1 << 18;
+		if (old_flags & (1 << 21)) // ImGuiWindowFlags_NoDocking
+			new_flags |= 1 << 19;
+		return new_flags;
+	}
+	auto convert_hovered_flags(ImGuiHoveredFlags old_flags) -> ImGuiHoveredFlags
+	{
+		ImGuiHoveredFlags new_flags = old_flags & 0x7FFF;
+		new_flags |= (old_flags & 0x1F800) << 1;
+		return new_flags;
+	}
+	auto convert_tree_node_flags(ImGuiTreeNodeFlags old_flags) -> ImGuiTreeNodeFlags
+	{
+		ImGuiTreeNodeFlags new_flags = old_flags & 0xFFFF9FFF;
+		if (old_flags & (1 << 13)) // ImGuiTreeNodeFlags_NavLeftJumpsBackHere
+			new_flags |= 1 << 14;
+		return new_flags;
+	}
 
-	io.ConfigDockingNoSplit = new_io.ConfigDockingNoSplit;
-	io.ConfigDockingWithShift = new_io.ConfigDockingWithShift;
-	io.ConfigDockingAlwaysTabBar = new_io.ConfigDockingAlwaysTabBar;
-	io.ConfigDockingTransparentPayload = new_io.ConfigDockingTransparentPayload;
+	void convert(const imgui_io_19000 &new_io, imgui_io_18971 &io)
+	{
+		io.ConfigFlags = new_io.ConfigFlags;
+		io.BackendFlags = new_io.BackendFlags;
+		io.DisplaySize = new_io.DisplaySize;
+		io.DeltaTime = new_io.DeltaTime;
+		io.IniSavingRate = new_io.IniSavingRate;
+		io.IniFilename = new_io.IniFilename;
+		io.LogFilename = new_io.LogFilename;
+		io.UserData = new_io.UserData;
 
-	io.ConfigViewportsNoAutoMerge = new_io.ConfigViewportsNoAutoMerge;
-	io.ConfigViewportsNoTaskBarIcon = new_io.ConfigViewportsNoTaskBarIcon;
-	io.ConfigViewportsNoDecoration = new_io.ConfigViewportsNoDecoration;
-	io.ConfigViewportsNoDefaultParent = new_io.ConfigViewportsNoDefaultParent;
+		// It's not safe to access the internal fields of 'FontAtlas'
+		io.Fonts = new_io.Fonts;
+		io.FontGlobalScale = new_io.FontGlobalScale;
+		io.FontAllowUserScaling = new_io.FontAllowUserScaling;
+		io.FontDefault = nullptr;
+		io.DisplayFramebufferScale = new_io.DisplayFramebufferScale;
 
-	io.MouseDrawCursor = new_io.MouseDrawCursor;
-	io.ConfigMacOSXBehaviors = new_io.ConfigMacOSXBehaviors;
-	io.ConfigInputTrickleEventQueue = new_io.ConfigInputTrickleEventQueue;
-	io.ConfigInputTextCursorBlink = new_io.ConfigInputTextCursorBlink;
-	io.ConfigInputTextEnterKeepActive = new_io.ConfigInputTextEnterKeepActive;
-	io.ConfigDragClickToInputText = new_io.ConfigDragClickToInputText;
-	io.ConfigWindowsResizeFromEdges = new_io.ConfigWindowsResizeFromEdges;
-	io.ConfigWindowsMoveFromTitleBarOnly = new_io.ConfigWindowsMoveFromTitleBarOnly;
-	io.ConfigMemoryCompactTimer = new_io.ConfigMemoryCompactTimer;
+		io.ConfigDockingNoSplit = new_io.ConfigDockingNoSplit;
+		io.ConfigDockingWithShift = new_io.ConfigDockingWithShift;
+		io.ConfigDockingAlwaysTabBar = new_io.ConfigDockingAlwaysTabBar;
+		io.ConfigDockingTransparentPayload = new_io.ConfigDockingTransparentPayload;
 
-	io.MouseDoubleClickTime = new_io.MouseDoubleClickTime;
-	io.MouseDoubleClickMaxDist = new_io.MouseDoubleClickMaxDist;
-	io.MouseDragThreshold = new_io.MouseDragThreshold;
-	io.KeyRepeatDelay = new_io.KeyRepeatDelay;
-	io.KeyRepeatRate = new_io.KeyRepeatRate;
+		io.ConfigViewportsNoAutoMerge = new_io.ConfigViewportsNoAutoMerge;
+		io.ConfigViewportsNoTaskBarIcon = new_io.ConfigViewportsNoTaskBarIcon;
+		io.ConfigViewportsNoDecoration = new_io.ConfigViewportsNoDecoration;
+		io.ConfigViewportsNoDefaultParent = new_io.ConfigViewportsNoDefaultParent;
 
-	io.ConfigDebugBeginReturnValueOnce = new_io.ConfigDebugBeginReturnValueOnce;
-	io.ConfigDebugBeginReturnValueLoop = new_io.ConfigDebugBeginReturnValueLoop;
-	io.ConfigDebugIgnoreFocusLoss = new_io.ConfigDebugIgnoreFocusLoss;
-	io.ConfigDebugIniSettings = new_io.ConfigDebugIniSettings;
+		io.MouseDrawCursor = new_io.MouseDrawCursor;
+		io.ConfigMacOSXBehaviors = new_io.ConfigMacOSXBehaviors;
+		io.ConfigInputTrickleEventQueue = new_io.ConfigInputTrickleEventQueue;
+		io.ConfigInputTextCursorBlink = new_io.ConfigInputTextCursorBlink;
+		io.ConfigInputTextEnterKeepActive = new_io.ConfigInputTextEnterKeepActive;
+		io.ConfigDragClickToInputText = new_io.ConfigDragClickToInputText;
+		io.ConfigWindowsResizeFromEdges = new_io.ConfigWindowsResizeFromEdges;
+		io.ConfigWindowsMoveFromTitleBarOnly = new_io.ConfigWindowsMoveFromTitleBarOnly;
+		io.ConfigMemoryCompactTimer = new_io.ConfigMemoryCompactTimer;
 
-	io.BackendPlatformName = new_io.BackendPlatformName;
-	io.BackendRendererName = new_io.BackendRendererName;
-	io.BackendPlatformUserData = new_io.BackendPlatformUserData;
-	io.BackendRendererUserData = new_io.BackendRendererUserData;
-	io.BackendLanguageUserData = new_io.BackendLanguageUserData;
+		io.MouseDoubleClickTime = new_io.MouseDoubleClickTime;
+		io.MouseDoubleClickMaxDist = new_io.MouseDoubleClickMaxDist;
+		io.MouseDragThreshold = new_io.MouseDragThreshold;
+		io.KeyRepeatDelay = new_io.KeyRepeatDelay;
+		io.KeyRepeatRate = new_io.KeyRepeatRate;
 
-	io.GetClipboardTextFn = new_io.GetClipboardTextFn;
-	io.SetClipboardTextFn = new_io.SetClipboardTextFn;
-	io.ClipboardUserData = new_io.ClipboardUserData;
-	io.SetPlatformImeDataFn = new_io.SetPlatformImeDataFn;
-	io.ImeWindowHandle = nullptr;
+		io.ConfigDebugBeginReturnValueOnce = new_io.ConfigDebugBeginReturnValueOnce;
+		io.ConfigDebugBeginReturnValueLoop = new_io.ConfigDebugBeginReturnValueLoop;
+		io.ConfigDebugIgnoreFocusLoss = new_io.ConfigDebugIgnoreFocusLoss;
+		io.ConfigDebugIniSettings = new_io.ConfigDebugIniSettings;
 
-	io.WantCaptureMouse = new_io.WantCaptureMouse;
-	io.WantCaptureKeyboard = new_io.WantCaptureKeyboard;
-	io.WantTextInput = new_io.WantTextInput;
-	io.WantSetMousePos = new_io.WantSetMousePos;
-	io.WantSaveIniSettings = new_io.WantSaveIniSettings;
-	io.NavActive = new_io.NavActive;
-	io.NavVisible = new_io.NavVisible;
-	io.Framerate = new_io.Framerate;
-	io.MetricsRenderVertices = new_io.MetricsRenderVertices;
-	io.MetricsRenderIndices = new_io.MetricsRenderIndices;
-	io.MetricsRenderWindows = new_io.MetricsRenderWindows;
-	io.MetricsActiveWindows = new_io.MetricsActiveWindows;
-	io.MetricsActiveAllocations = 0;
-	io.MouseDelta = new_io.MouseDelta;
+		io.BackendPlatformName = new_io.BackendPlatformName;
+		io.BackendRendererName = new_io.BackendRendererName;
+		io.BackendPlatformUserData = new_io.BackendPlatformUserData;
+		io.BackendRendererUserData = new_io.BackendRendererUserData;
+		io.BackendLanguageUserData = new_io.BackendLanguageUserData;
 
-	for (int i = 0; i < 652; ++i)
-		io.KeyMap[i] = 0;
-	for (int i = 0; i < 652; ++i)
-		io.KeysDown[i] = false; // ImGui::IsKeyDown(i)
-	for (int i = 0; i < 16; ++i)
-		io.NavInputs[i] = 0.0f;
+		io.GetClipboardTextFn = new_io.GetClipboardTextFn;
+		io.SetClipboardTextFn = new_io.SetClipboardTextFn;
+		io.ClipboardUserData = new_io.ClipboardUserData;
+		io.SetPlatformImeDataFn = new_io.SetPlatformImeDataFn;
+		io.ImeWindowHandle = nullptr;
 
-	io.Ctx = new_io.Ctx;
+		io.WantCaptureMouse = new_io.WantCaptureMouse;
+		io.WantCaptureKeyboard = new_io.WantCaptureKeyboard;
+		io.WantTextInput = new_io.WantTextInput;
+		io.WantSetMousePos = new_io.WantSetMousePos;
+		io.WantSaveIniSettings = new_io.WantSaveIniSettings;
+		io.NavActive = new_io.NavActive;
+		io.NavVisible = new_io.NavVisible;
+		io.Framerate = new_io.Framerate;
+		io.MetricsRenderVertices = new_io.MetricsRenderVertices;
+		io.MetricsRenderIndices = new_io.MetricsRenderIndices;
+		io.MetricsRenderWindows = new_io.MetricsRenderWindows;
+		io.MetricsActiveWindows = new_io.MetricsActiveWindows;
+		io.MetricsActiveAllocations = 0;
+		io.MouseDelta = new_io.MouseDelta;
 
-	io.MousePos = new_io.MousePos;
-	for (int i = 0; i < 5; ++i)
-		io.MouseDown[i] = new_io.MouseDown[i];
-	io.MouseWheel = new_io.MouseWheel;
-	io.MouseWheelH = new_io.MouseWheelH;
-	io.MouseSource = new_io.MouseSource;
-	io.MouseHoveredViewport = new_io.MouseHoveredViewport;
-	io.KeyCtrl = new_io.KeyCtrl;
-	io.KeyShift = new_io.KeyShift;
-	io.KeyAlt = new_io.KeyAlt;
-	io.KeySuper = new_io.KeySuper;
-}
+		for (int i = 0; i < 652; ++i)
+			io.KeyMap[i] = 0;
+		for (int i = 0; i < 652; ++i)
+			io.KeysDown[i] = false; // ImGui::IsKeyDown(i)
+		for (int i = 0; i < 16; ++i)
+			io.NavInputs[i] = 0.0f;
 
-static void convert(const imgui_style_19000 &new_style, imgui_style_18971 &style)
-{
-	style.Alpha = new_style.Alpha;
-	style.DisabledAlpha = new_style.DisabledAlpha;
-	style.WindowPadding = new_style.WindowPadding;
-	style.WindowRounding = new_style.WindowRounding;
-	style.WindowBorderSize = new_style.WindowBorderSize;
-	style.WindowMinSize = new_style.WindowMinSize;
-	style.WindowTitleAlign = new_style.WindowTitleAlign;
-	style.WindowMenuButtonPosition = new_style.WindowMenuButtonPosition;
-	style.ChildRounding = new_style.ChildRounding;
-	style.ChildBorderSize = new_style.ChildBorderSize;
-	style.PopupRounding = new_style.PopupRounding;
-	style.PopupBorderSize = new_style.PopupBorderSize;
-	style.FramePadding = new_style.FramePadding;
-	style.FrameRounding = new_style.FrameRounding;
-	style.FrameBorderSize = new_style.FrameBorderSize;
-	style.ItemSpacing = new_style.ItemSpacing;
-	style.ItemInnerSpacing = new_style.ItemInnerSpacing;
-	style.CellPadding = new_style.CellPadding;
-	style.TouchExtraPadding = new_style.TouchExtraPadding;
-	style.IndentSpacing = new_style.IndentSpacing;
-	style.ColumnsMinSpacing = new_style.ColumnsMinSpacing;
-	style.ScrollbarSize = new_style.ScrollbarSize;
-	style.ScrollbarRounding = new_style.ScrollbarRounding;
-	style.GrabMinSize = new_style.GrabMinSize;
-	style.GrabRounding = new_style.GrabRounding;
-	style.LogSliderDeadzone = new_style.LogSliderDeadzone;
-	style.TabRounding = new_style.TabRounding;
-	style.TabBorderSize = new_style.TabBorderSize;
-	style.TabMinWidthForCloseButton = new_style.TabMinWidthForCloseButton;
-	style.ColorButtonPosition = new_style.ColorButtonPosition;
-	style.ButtonTextAlign = new_style.ButtonTextAlign;
-	style.SelectableTextAlign = new_style.SelectableTextAlign;
-	style.SeparatorTextBorderSize = new_style.SeparatorTextBorderSize;
-	style.SeparatorTextAlign = new_style.SeparatorTextAlign;
-	style.SeparatorTextPadding = new_style.SeparatorTextPadding;
-	style.DisplayWindowPadding = new_style.DisplayWindowPadding;
-	style.DisplaySafeAreaPadding = new_style.DisplaySafeAreaPadding;
-	style.MouseCursorScale = new_style.MouseCursorScale;
-	style.AntiAliasedLines = new_style.AntiAliasedLines;
-	style.AntiAliasedLinesUseTex = new_style.AntiAliasedLinesUseTex;
-	style.AntiAliasedFill = new_style.AntiAliasedFill;
-	style.CurveTessellationTol = new_style.CurveTessellationTol;
-	style.CircleTessellationMaxError = new_style.CircleTessellationMaxError;
-	for (int i = 0; i < 55; ++i)
-		style.Colors[i] = new_style.Colors[i];
-	style.HoverStationaryDelay = new_style.HoverStationaryDelay;
-	style.HoverDelayShort = new_style.HoverDelayShort;
-	style.HoverDelayNormal = new_style.HoverDelayNormal;
-	style.HoverFlagsForTooltipMouse = new_style.HoverFlagsForTooltipMouse;
-	style.HoverFlagsForTooltipNav = new_style.HoverFlagsForTooltipNav;
-}
+		io.Ctx = new_io.Ctx;
 
-static auto convert_window_flags(ImGuiWindowFlags old_flags) -> ImGuiWindowFlags
-{
-	int new_flags = 0;
-	if (old_flags & (1 << 18))
-		new_flags |= ImGuiWindowFlags_NoNavInputs;
-	if (old_flags & (1 << 19))
-		new_flags |= ImGuiWindowFlags_NoNavFocus;
-	if (old_flags & (1 << 20))
-		new_flags |= ImGuiWindowFlags_UnsavedDocument;
-	if (old_flags & (1 << 21))
-		new_flags |= ImGuiWindowFlags_NoDocking;
+		io.MousePos = new_io.MousePos;
+		for (int i = 0; i < 5; ++i)
+			io.MouseDown[i] = new_io.MouseDown[i];
+		io.MouseWheel = new_io.MouseWheel;
+		io.MouseWheelH = new_io.MouseWheelH;
+		io.MouseSource = new_io.MouseSource;
+		io.MouseHoveredViewport = new_io.MouseHoveredViewport;
+		io.KeyCtrl = new_io.KeyCtrl;
+		io.KeyShift = new_io.KeyShift;
+		io.KeyAlt = new_io.KeyAlt;
+		io.KeySuper = new_io.KeySuper;
+	}
 
-	return (old_flags & 0xFFC0FFFF) | new_flags;
-}
-static auto convert_hovered_flags(ImGuiHoveredFlags old_flags) -> ImGuiHoveredFlags
-{
-	int new_flags = 0;
-	if (old_flags & (1 << 11))
-		new_flags |= ImGuiHoveredFlags_ForTooltip;
-	if (old_flags & (1 << 12))
-		new_flags |= ImGuiHoveredFlags_Stationary;
-	if (old_flags & (1 << 13))
-		new_flags |= ImGuiHoveredFlags_DelayNone;
-	if (old_flags & (1 << 14))
-		new_flags |= ImGuiHoveredFlags_DelayShort;
-	if (old_flags & (1 << 15))
-		new_flags |= ImGuiHoveredFlags_DelayNormal;
-	if (old_flags & (1 << 16))
-		new_flags |= ImGuiHoveredFlags_NoSharedDelay;
-
-	return (old_flags & 0x00FFFFFF) | new_flags;
-}
-static auto convert_tree_node_flags(ImGuiTreeNodeFlags old_flags) -> ImGuiTreeNodeFlags
-{
-	int new_flags = 0;
-	if (old_flags & (1 << 13))
-		new_flags |= ImGuiTreeNodeFlags_NavLeftJumpsBackHere;
-
-	return (old_flags & 0xFFFF9FFF) | new_flags;
-}
-
-static auto convert_key(ImGuiKey old_value) -> ImGuiKey
-{
-	return old_value <= ImGuiKey_F12 ? old_value : old_value <= (ImGuiKey_KeypadEqual - (ImGuiKey_F24 - ImGuiKey_F12)) ? static_cast<ImGuiKey>(old_value - (ImGuiKey_F24 - ImGuiKey_F12)) : static_cast<ImGuiKey>(old_value - (ImGuiKey_F24 - ImGuiKey_F12) - (ImGuiKey_AppForward - ImGuiKey_KeypadEqual));
-}
-static auto convert_style_var(ImGuiStyleVar old_value) -> ImGuiStyleVar
-{
-	return old_value <= ImGuiStyleVar_TabRounding ? old_value : old_value + 1;
+	void convert(const imgui_style_19000 &new_style, imgui_style_18971 &style)
+	{
+		style.Alpha = new_style.Alpha;
+		style.DisabledAlpha = new_style.DisabledAlpha;
+		style.WindowPadding = new_style.WindowPadding;
+		style.WindowRounding = new_style.WindowRounding;
+		style.WindowBorderSize = new_style.WindowBorderSize;
+		style.WindowMinSize = new_style.WindowMinSize;
+		style.WindowTitleAlign = new_style.WindowTitleAlign;
+		style.WindowMenuButtonPosition = new_style.WindowMenuButtonPosition;
+		style.ChildRounding = new_style.ChildRounding;
+		style.ChildBorderSize = new_style.ChildBorderSize;
+		style.PopupRounding = new_style.PopupRounding;
+		style.PopupBorderSize = new_style.PopupBorderSize;
+		style.FramePadding = new_style.FramePadding;
+		style.FrameRounding = new_style.FrameRounding;
+		style.FrameBorderSize = new_style.FrameBorderSize;
+		style.ItemSpacing = new_style.ItemSpacing;
+		style.ItemInnerSpacing = new_style.ItemInnerSpacing;
+		style.CellPadding = new_style.CellPadding;
+		style.TouchExtraPadding = new_style.TouchExtraPadding;
+		style.IndentSpacing = new_style.IndentSpacing;
+		style.ColumnsMinSpacing = new_style.ColumnsMinSpacing;
+		style.ScrollbarSize = new_style.ScrollbarSize;
+		style.ScrollbarRounding = new_style.ScrollbarRounding;
+		style.GrabMinSize = new_style.GrabMinSize;
+		style.GrabRounding = new_style.GrabRounding;
+		style.LogSliderDeadzone = new_style.LogSliderDeadzone;
+		style.TabRounding = new_style.TabRounding;
+		style.TabBorderSize = new_style.TabBorderSize;
+		style.TabMinWidthForCloseButton = new_style.TabMinWidthForCloseButton;
+		style.ColorButtonPosition = new_style.ColorButtonPosition;
+		style.ButtonTextAlign = new_style.ButtonTextAlign;
+		style.SelectableTextAlign = new_style.SelectableTextAlign;
+		style.SeparatorTextBorderSize = new_style.SeparatorTextBorderSize;
+		style.SeparatorTextAlign = new_style.SeparatorTextAlign;
+		style.SeparatorTextPadding = new_style.SeparatorTextPadding;
+		style.DisplayWindowPadding = new_style.DisplayWindowPadding;
+		style.DisplaySafeAreaPadding = new_style.DisplaySafeAreaPadding;
+		style.MouseCursorScale = new_style.MouseCursorScale;
+		style.AntiAliasedLines = new_style.AntiAliasedLines;
+		style.AntiAliasedLinesUseTex = new_style.AntiAliasedLinesUseTex;
+		style.AntiAliasedFill = new_style.AntiAliasedFill;
+		style.CurveTessellationTol = new_style.CurveTessellationTol;
+		style.CircleTessellationMaxError = new_style.CircleTessellationMaxError;
+		for (int i = 0; i < 55; ++i)
+			style.Colors[i] = new_style.Colors[i];
+		style.HoverStationaryDelay = new_style.HoverStationaryDelay;
+		style.HoverDelayShort = new_style.HoverDelayShort;
+		style.HoverDelayNormal = new_style.HoverDelayNormal;
+		style.HoverFlagsForTooltipMouse = new_style.HoverFlagsForTooltipMouse;
+		style.HoverFlagsForTooltipNav = new_style.HoverFlagsForTooltipNav;
+	}
 }
 
 const imgui_function_table_18971 init_imgui_function_table_18971() { return {
@@ -226,14 +223,16 @@ const imgui_function_table_18971 init_imgui_function_table_18971() { return {
 	[](const char *name, bool *p_open, ImGuiWindowFlags flags) -> bool { return g_imgui_function_table_19000.Begin(name, p_open, convert_window_flags(flags)); },
 	g_imgui_function_table_19000.End,
 	[](const char *str_id, const ImVec2 &size, bool border, ImGuiWindowFlags flags) -> bool {
-		ImGuiChildFlags child_flags = border ? ImGuiChildFlags_Border : ImGuiChildFlags_None;
+		ImGuiChildFlags child_flags = 0;
+		if (border)
+			child_flags |= 1 << 0; // ImGuiChildFlags_Border
 		if (flags & (1 << 16))
-			child_flags |= ImGuiChildFlags_AlwaysUseWindowPadding;
+			child_flags |= 1 << 1; // ImGuiChildFlags_AlwaysUseWindowPadding
 		ImVec2 full_size = size;
-		if (flags & ImGuiWindowFlags_AlwaysAutoResize)
+		if (flags & (1 <<  6)) // ImGuiWindowFlags_AlwaysAutoResize
 		{
-			flags ^= ImGuiWindowFlags_AlwaysAutoResize;
-			child_flags |= ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysAutoResize;
+			flags ^= 1 <<  6;
+			child_flags |= (1 << 4) | (1 << 5) | (1 << 6); // ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysAutoResize
 			if (size.x == 0.0f)
 				full_size.x = g_imgui_function_table_19000.GetContentRegionAvail().x;
 			if (size.y == 0.0f)
@@ -242,14 +241,16 @@ const imgui_function_table_18971 init_imgui_function_table_18971() { return {
 		return g_imgui_function_table_19000.BeginChild(str_id, full_size, child_flags, convert_window_flags(flags));
 	},
 	[](ImGuiID id, const ImVec2 &size, bool border, ImGuiWindowFlags flags) -> bool {
-		ImGuiChildFlags child_flags = border ? ImGuiChildFlags_Border : ImGuiChildFlags_None;
+		ImGuiChildFlags child_flags = 0;
+		if (border)
+			child_flags |= 1 << 0; // ImGuiChildFlags_Border
 		if (flags & (1 << 16))
-			child_flags |= ImGuiChildFlags_AlwaysUseWindowPadding;
+			child_flags |= 1 << 1; // ImGuiChildFlags_AlwaysUseWindowPadding
 		ImVec2 full_size = size;
-		if (flags & ImGuiWindowFlags_AlwaysAutoResize)
+		if (flags & (1 <<  6)) // ImGuiWindowFlags_AlwaysAutoResize
 		{
-			flags ^= ImGuiWindowFlags_AlwaysAutoResize;
-			child_flags |= ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysAutoResize;
+			flags ^= 1 <<  6;
+			child_flags |= (1 << 4) | (1 << 5) | (1 << 6); // ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysAutoResize
 			if (size.x == 0.0f)
 				full_size.x = g_imgui_function_table_19000.GetContentRegionAvail().x;
 			if (size.y == 0.0f)
@@ -385,7 +386,7 @@ const imgui_function_table_18971 init_imgui_function_table_18971() { return {
 		return g_imgui_function_table_19000.Combo3(
 			label,
 			current_item,
-			[](void *user_data, int idx) -> const char *{
+			[](void *user_data, int idx) -> const char * {
 				const char *element = nullptr;
 				static_cast<old_to_new_data_type *>(user_data)->old_callback(static_cast<old_to_new_data_type *>(user_data)->user_data, idx, &element);
 				return element;
@@ -459,7 +460,6 @@ const imgui_function_table_18971 init_imgui_function_table_18971() { return {
 	g_imgui_function_table_19000.EndListBox,
 	g_imgui_function_table_19000.ListBox,
 	[](const char *label, int *current_item, bool (*callback)(void *user_data, int idx, const char **out_text), void *user_data, int items_count, int height_in_items) -> bool {
-
 		struct old_to_new_data_type { void *user_data; bool (*old_callback)(void *, int, const char **); } old_to_new_data = { user_data, callback };
 		return g_imgui_function_table_19000.ListBox2(
 			label,

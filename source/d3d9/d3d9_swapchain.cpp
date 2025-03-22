@@ -5,7 +5,7 @@
 
 #include "d3d9_device.hpp"
 #include "d3d9_swapchain.hpp"
-#include "dll_log.hpp" // Include late to get HRESULT log overloads
+#include "dll_log.hpp" // Include late to get 'hr_to_string' helper function
 #include "addon_manager.hpp"
 #include "runtime_manager.hpp"
 #include <algorithm> // std::find
@@ -29,7 +29,7 @@ Direct3DSwapChain9::Direct3DSwapChain9(Direct3DDevice9 *device, IDirect3DSwapCha
 	assert(_orig != nullptr && _device != nullptr);
 
 	reshade::create_effect_runtime(this, device);
-	on_init();
+	on_init(false);
 }
 Direct3DSwapChain9::Direct3DSwapChain9(Direct3DDevice9 *device, IDirect3DSwapChain9Ex *original) :
 	Direct3DSwapChain9(device, static_cast<IDirect3DSwapChain9 *>(original))
@@ -38,7 +38,7 @@ Direct3DSwapChain9::Direct3DSwapChain9(Direct3DDevice9 *device, IDirect3DSwapCha
 }
 Direct3DSwapChain9::~Direct3DSwapChain9()
 {
-	on_reset();
+	on_reset(false);
 	reshade::destroy_effect_runtime(this);
 }
 
@@ -57,7 +57,7 @@ bool Direct3DSwapChain9::check_and_upgrade_interface(REFIID riid)
 		if (FAILED(_orig->QueryInterface(IID_PPV_ARGS(&new_interface))))
 			return false;
 #if RESHADE_VERBOSE_LOG
-		LOG(DEBUG) << "Upgrading IDirect3DSwapChain9 object " << this << " to IDirect3DSwapChain9Ex.";
+		reshade::log::message(reshade::log::level::debug, "Upgrading IDirect3DSwapChain9 object %p to IDirect3DSwapChain9Ex.", this);
 #endif
 		_orig->Release();
 		_orig = new_interface;
@@ -105,14 +105,14 @@ ULONG   STDMETHODCALLTYPE Direct3DSwapChain9::Release()
 	const auto orig = _orig;
 	const bool extended_interface = _extended_interface;
 #if RESHADE_VERBOSE_LOG
-	LOG(DEBUG) << "Destroying " << "IDirect3DSwapChain9" << (extended_interface ? "Ex" : "") << " object " << this << " (" << orig << ").";
+	reshade::log::message(reshade::log::level::debug, "Destroying IDirect3DSwapChain9%s object %p (%p).", extended_interface ? "Ex" : "", this, orig);
 #endif
 	this->~Direct3DSwapChain9();
 
 	// Only release internal reference after the effect runtime has been destroyed, so any references it held are cleaned up at this point
 	const ULONG ref_orig = orig->Release();
 	if (ref_orig != 0) // Verify internal reference count
-		LOG(WARN) << "Reference count for " << "IDirect3DSwapChain9" << (extended_interface ? "Ex" : "") << " object " << this << " (" << orig << ") is inconsistent (" << ref_orig << ").";
+		reshade::log::message(reshade::log::level::warning, "Reference count for IDirect3DSwapChain9%s object %p (%p) is inconsistent (%lu).", extended_interface ? "Ex" : "", this, orig, ref_orig);
 
 	operator delete(this, sizeof(Direct3DSwapChain9));
 	return 0;
@@ -183,23 +183,25 @@ HRESULT STDMETHODCALLTYPE Direct3DSwapChain9::GetDisplayModeEx(D3DDISPLAYMODEEX 
 	return static_cast<IDirect3DSwapChain9Ex *>(_orig)->GetDisplayModeEx(pMode, pRotation);
 }
 
-void Direct3DSwapChain9::on_init()
+void Direct3DSwapChain9::on_init(bool resize)
 {
 	assert(!_is_initialized);
 
 #if RESHADE_ADDON
-	reshade::invoke_addon_event<reshade::addon_event::init_swapchain>(this);
+	reshade::invoke_addon_event<reshade::addon_event::init_swapchain>(this, resize);
 
 	D3DPRESENT_PARAMETERS pp = {};
 	_orig->GetPresentParameters(&pp);
 	reshade::invoke_addon_event<reshade::addon_event::set_fullscreen_state>(this, pp.Windowed == FALSE, nullptr);
+#else
+	UNREFERENCED_PARAMETER(resize);
 #endif
 
 	reshade::init_effect_runtime(this);
 
 	_is_initialized = true;
 }
-void Direct3DSwapChain9::on_reset()
+void Direct3DSwapChain9::on_reset(bool resize)
 {
 	// May be called without a previous call to 'on_init' if a device reset had failed
 	if (!_is_initialized)
@@ -208,7 +210,9 @@ void Direct3DSwapChain9::on_reset()
 	reshade::reset_effect_runtime(this);
 
 #if RESHADE_ADDON
-	reshade::invoke_addon_event<reshade::addon_event::destroy_swapchain>(this);
+	reshade::invoke_addon_event<reshade::addon_event::destroy_swapchain>(this, resize);
+#else
+	UNREFERENCED_PARAMETER(resize);
 #endif
 
 	_back_buffer.reset();
@@ -251,7 +255,7 @@ void Direct3DSwapChain9::handle_device_loss(HRESULT hr)
 	// Ignore D3DERR_DEVICELOST, since it can frequently occur when minimizing out of exclusive fullscreen
 	if (hr == D3DERR_DEVICEREMOVED || hr == D3DERR_DEVICEHUNG)
 	{
-		LOG(ERROR) << "Device was lost with " << hr << '!';
+		reshade::log::message(reshade::log::level::error, "Device was lost with %s!", reshade::log::hr_to_string(hr).c_str());
 		// Do not clean up resources, since application has to call 'IDirect3DDevice9::Reset' anyway, which will take care of that
 	}
 }

@@ -15,19 +15,17 @@ enum class intrinsic_id
 	#include "effect_symbol_table_intrinsics.inl"
 };
 
-struct intrinsic
+struct intrinsic : reshadefx::function
 {
-	intrinsic(const char *name, intrinsic_id id, const reshadefx::type &ret_type, std::initializer_list<reshadefx::type> arg_types) : id(id)
+	intrinsic(const char *name, intrinsic_id id, const reshadefx::type &ret_type, std::initializer_list<reshadefx::type> arg_types)
 	{
-		function.return_type = ret_type;
-		function.name = name;
-		function.parameter_list.reserve(arg_types.size());
+		function::return_type = ret_type;
+		function::id = static_cast<uint32_t>(id);
+		function::name = name;
+		function::parameter_list.reserve(arg_types.size());
 		for (const reshadefx::type &arg_type : arg_types)
-			function.parameter_list.push_back({ arg_type });
+			function::parameter_list.push_back({ arg_type });
 	}
-
-	intrinsic_id id;
-	reshadefx::function_info function;
 };
 
 #define void { reshadefx::type::t_void }
@@ -78,9 +76,15 @@ struct intrinsic
 #define sampler1d_int { reshadefx::type::t_sampler1d_int, 1, 1 }
 #define sampler2d_int { reshadefx::type::t_sampler2d_int, 1, 1 }
 #define sampler3d_int { reshadefx::type::t_sampler3d_int, 1, 1 }
+#define sampler1d_int4 { reshadefx::type::t_sampler1d_int, 4, 1 }
+#define sampler2d_int4 { reshadefx::type::t_sampler2d_int, 4, 1 }
+#define sampler3d_int4 { reshadefx::type::t_sampler3d_int, 4, 1 }
 #define sampler1d_uint { reshadefx::type::t_sampler1d_uint, 1, 1 }
 #define sampler2d_uint { reshadefx::type::t_sampler2d_uint, 1, 1 }
 #define sampler3d_uint { reshadefx::type::t_sampler3d_uint, 1, 1 }
+#define sampler1d_uint4 { reshadefx::type::t_sampler1d_uint, 4, 1 }
+#define sampler2d_uint4 { reshadefx::type::t_sampler2d_uint, 4, 1 }
+#define sampler3d_uint4 { reshadefx::type::t_sampler3d_uint, 4, 1 }
 #define sampler1d_float { reshadefx::type::t_sampler1d_float, 1, 1 }
 #define sampler2d_float { reshadefx::type::t_sampler2d_float, 1, 1 }
 #define sampler3d_float { reshadefx::type::t_sampler3d_float, 1, 1 }
@@ -90,9 +94,15 @@ struct intrinsic
 #define storage1d_int { reshadefx::type::t_storage1d_int, 1, 1 }
 #define storage2d_int { reshadefx::type::t_storage2d_int, 1, 1 }
 #define storage3d_int { reshadefx::type::t_storage3d_int, 1, 1 }
+#define storage1d_int4 { reshadefx::type::t_storage1d_int, 4, 1 }
+#define storage2d_int4 { reshadefx::type::t_storage2d_int, 4, 1 }
+#define storage3d_int4 { reshadefx::type::t_storage3d_int, 4, 1 }
 #define storage1d_uint { reshadefx::type::t_storage1d_uint, 1, 1 }
 #define storage2d_uint { reshadefx::type::t_storage2d_uint, 1, 1 }
 #define storage3d_uint { reshadefx::type::t_storage3d_uint, 1, 1 }
+#define storage1d_uint4 { reshadefx::type::t_storage1d_uint, 4, 1 }
+#define storage2d_uint4 { reshadefx::type::t_storage2d_uint, 4, 1 }
+#define storage3d_uint4 { reshadefx::type::t_storage3d_uint, 4, 1 }
 #define storage1d_float { reshadefx::type::t_storage1d_float, 1, 1 }
 #define storage2d_float { reshadefx::type::t_storage2d_float, 1, 1 }
 #define storage3d_float { reshadefx::type::t_storage3d_float, 1, 1 }
@@ -136,7 +146,7 @@ unsigned int reshadefx::type::rank(const type &src, const type &dst)
 	if (src.is_array() != dst.is_array() || (src.array_length != dst.array_length && src.is_bounded_array() && dst.is_bounded_array()))
 		return 0; // Arrays of different sizes are not compatible
 	if (src.is_struct() || dst.is_struct())
-		return src.definition == dst.definition ? 32 : 0; // Structs are only compatible if they are the same type
+		return src.struct_definition == dst.struct_definition ? 32 : 0; // Structs are only compatible if they are the same type
 	if (!src.is_numeric() || !dst.is_numeric())
 		return src.base == dst.base && src.rows == dst.rows && src.cols == dst.cols ? 32 : 0; // Numeric values are not compatible with other types
 	if (src.is_matrix() && (!dst.is_matrix() || src.rows != dst.rows || src.cols != dst.cols))
@@ -300,7 +310,7 @@ reshadefx::scoped_symbol reshadefx::symbol_table::find_symbol(const std::string 
 	return result;
 }
 
-static int compare_functions(const std::vector<reshadefx::expression> &arguments, const reshadefx::function_info *function1, const reshadefx::function_info *function2)
+static int compare_functions(const std::vector<reshadefx::expression> &arguments, const reshadefx::function *function1, const reshadefx::function *function2)
 {
 	const size_t num_arguments = arguments.size();
 
@@ -353,7 +363,7 @@ bool reshadefx::symbol_table::resolve_function_call(const std::string &name, con
 {
 	out_data.op = symbol_type::function;
 
-	const function_info *result = nullptr;
+	const function *result = nullptr;
 	unsigned int num_overloads = 0;
 	unsigned int overload_namespace = scope.namespace_level;
 
@@ -370,7 +380,7 @@ bool reshadefx::symbol_table::resolve_function_call(const std::string &name, con
 				it->scope.namespace_level > scope.namespace_level || (it->scope.namespace_level == scope.namespace_level && it->scope.name != scope.name))
 				continue;
 
-			const function_info *const function = it->function;
+			const function *const function = it->function;
 
 			if (function == nullptr)
 				continue;
@@ -418,18 +428,18 @@ bool reshadefx::symbol_table::resolve_function_call(const std::string &name, con
 	{
 		for (const intrinsic &intrinsic : s_intrinsics)
 		{
-			if (intrinsic.function.name != name || intrinsic.function.parameter_list.size() != arguments.size())
+			if (intrinsic.name != name || intrinsic.parameter_list.size() != arguments.size())
 				continue;
 
 			// A new possibly-matching intrinsic function was found, compare it against the current result
-			const int comparison = compare_functions(arguments, &intrinsic.function, result);
+			const int comparison = compare_functions(arguments, &intrinsic, result);
 
 			if (comparison < 0) // The new function is a better match
 			{
 				out_data.op = symbol_type::intrinsic;
-				out_data.id = static_cast<uint32_t>(intrinsic.id);
-				out_data.type = intrinsic.function.return_type;
-				out_data.function = &intrinsic.function;
+				out_data.id = intrinsic.id;
+				out_data.type = intrinsic.return_type;
+				out_data.function = &intrinsic;
 				result = out_data.function;
 				num_overloads = 1;
 			}

@@ -58,17 +58,16 @@ bool is_windows7()
 static bool resolve_env_path(std::filesystem::path &path, const std::filesystem::path &base = g_reshade_dll_path.parent_path())
 {
 	WCHAR buf[4096];
-	if (!ExpandEnvironmentStringsW(path.c_str(), buf, ARRAYSIZE(buf)))
+	if (ExpandEnvironmentStringsW(path.c_str(), buf, ARRAYSIZE(buf)))
+		path = buf;
+	else
 		return false;
 
-	path = buf;
 	path = base / path;
-	path = path.lexically_normal();
-	if (!path.has_stem()) // Remove trailing slash
-		path = path.parent_path();
 
 	std::error_code ec;
-	return std::filesystem::is_directory(path, ec);
+	path = std::filesystem::canonical(path, ec);
+	return !ec && std::filesystem::is_directory(path, ec);
 }
 
 /// <summary>
@@ -78,11 +77,14 @@ std::filesystem::path get_base_path(bool default_to_target_executable_path = fal
 {
 	std::filesystem::path result;
 
-	if (reshade::global_config().get("INSTALL", "BasePath", result) && resolve_env_path(result))
+	// Cannot use global config here yet, since it uses base path for look up, so look at config file next to target executable instead
+	if (ini_file::load_cache(g_target_executable_path.parent_path() / L"ReShade.ini").get("INSTALL", "BasePath", result) &&
+		resolve_env_path(result))
 		return result;
 
 	WCHAR buf[4096];
-	if (GetEnvironmentVariableW(L"RESHADE_BASE_PATH_OVERRIDE", buf, ARRAYSIZE(buf)) && resolve_env_path(result = buf))
+	if (GetEnvironmentVariableW(L"RESHADE_BASE_PATH_OVERRIDE", buf, ARRAYSIZE(buf)) &&
+		resolve_env_path(result = buf))
 		return result;
 
 	return default_to_target_executable_path ? g_target_executable_path.parent_path() : g_reshade_dll_path.parent_path();
@@ -97,11 +99,13 @@ std::filesystem::path get_system_path()
 	if (!result.empty())
 		return result; // Return the cached path if it exists
 
-	if (reshade::global_config().get("INSTALL", "ModulePath", result) && resolve_env_path(result))
+	if (reshade::global_config().get("INSTALL", "ModulePath", result) &&
+		resolve_env_path(result))
 		return result;
 
 	WCHAR buf[4096];
-	if (GetEnvironmentVariableW(L"RESHADE_MODULE_PATH_OVERRIDE", buf, ARRAYSIZE(buf)) && resolve_env_path(result = buf))
+	if (GetEnvironmentVariableW(L"RESHADE_MODULE_PATH_OVERRIDE", buf, ARRAYSIZE(buf)) &&
+		resolve_env_path(result = buf))
 		return result;
 
 	// First try environment variable, use system directory if it does not exist or is empty
@@ -132,8 +136,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 			g_reshade_dll_path = get_module_path(hModule);
 			g_target_executable_path = get_module_path(nullptr);
 
-			const ini_file &config = reshade::global_config();
-
 			const std::filesystem::path module_name = g_reshade_dll_path.stem();
 
 			const bool is_d3d = _wcsnicmp(module_name.c_str(), L"d3d", 3) == 0;
@@ -144,6 +146,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 			// UWP apps do not have write access to the application directory, so never default the base path to it for them
 			const bool default_base_to_target_executable_path = !is_d3d && !is_dxgi && !is_opengl && !is_dinput && !is_uwp_app();
 
+			g_reshade_base_path = get_base_path(default_base_to_target_executable_path);
+
+			const ini_file &config = reshade::global_config();
+
 			// When ReShade is not loaded by proxy, only actually load when a configuration file exists for the target executable
 			// This e.g. prevents loading the implicit Vulkan layer when not explicitly enabled for an application
 			if (default_base_to_target_executable_path && !GetEnvironmentVariableW(L"RESHADE_DISABLE_LOADING_CHECK", nullptr, 0))
@@ -153,13 +159,11 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 				{
 #ifndef NDEBUG
 					// Log was not yet opened at this point, so this only writes to debug output
-					LOG(WARN) << "ReShade was not enabled for " << g_target_executable_path << "! Aborting initialization ...";
+					reshade::log::message(reshade::log::level::warning, "ReShade was not enabled for '%s'! Aborting initialization ...", g_target_executable_path.u8string().c_str());
 #endif
 					return FALSE; // Make the 'LoadLibrary' call that loaded this instance fail
 				}
 			}
-
-			g_reshade_base_path = get_base_path(default_base_to_target_executable_path);
 
 			if (config.get("INSTALL", "Logging") || (!config.has("INSTALL", "Logging") && !GetEnvironmentVariableW(L"RESHADE_DISABLE_LOGGING", nullptr, 0)))
 			{
@@ -180,25 +184,27 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 
 #ifndef NDEBUG
 					if (ec)
-						LOG(ERROR) << "Opening the ReShade log file" << " failed with error code " << ec.value() << '.';
+						reshade::log::message(reshade::log::level::error, "Opening the ReShade log file failed with error code %d.", ec.value());
 #endif
 				}
 			}
 
-			LOG(INFO) << "Initializing crosire's ReShade version '" VERSION_STRING_FILE "' "
+			reshade::log::message(reshade::log::level::info,
+				"Initializing crosire's ReShade version '" VERSION_STRING_FILE "' "
 #ifndef _WIN64
 				"(32-bit) "
 #else
 				"(64-bit) "
 #endif
-				"loaded from " << g_reshade_dll_path << " into " <<
+				"loaded from '%s' into '%s' (0x%X) ...",
+				g_reshade_dll_path.u8string().c_str(),
 #ifndef NDEBUG
-				static_cast<const wchar_t *>(GetCommandLineW()) <<
+				static_cast<const char *>(GetCommandLineA()),
 #else
 				// Do not log full command-line in release builds, since it may contain sensitive information like authentication tokens
-				g_target_executable_path <<
+				g_target_executable_path.u8string().c_str(),
 #endif
-				" (" << std::hex << (std::hash<std::string>()(g_target_executable_path.stem().u8string()) & 0xFFFFFFFF) << std::dec << ") ...";
+				static_cast<unsigned int>(std::hash<std::string>()(g_target_executable_path.stem().u8string()) & 0xFFFFFFFF));
 
 			// Check if another ReShade instance was already loaded into the process
 			if (HMODULE modules[1024]; K32EnumProcessModules(GetCurrentProcess(), modules, sizeof(modules), &fdwReason)) // Use kernel32 variant which is available in DllMain
@@ -207,7 +213,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 				{
 					if (modules[i] != hModule && GetProcAddress(modules[i], "ReShadeVersion") != nullptr)
 					{
-						LOG(WARN) << "Another ReShade instance was already loaded from " << get_module_path(modules[i]) << "! Aborting initialization ...";
+						reshade::log::message(reshade::log::level::warning, "Another ReShade instance was already loaded from '%s'! Aborting initialization ...", get_module_path(modules[i]).u8string().c_str());
 						return FALSE; // Make the 'LoadLibrary' call that loaded this instance fail
 					}
 				}
@@ -231,12 +237,12 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 					// Create dump with exception information for the first 100 occurrences
 					if (static unsigned int dump_index = 0; dump_index < 100)
 					{
-						const auto dbghelp = GetModuleHandleW(L"dbghelp.dll");
-						if (dbghelp == nullptr)
+						const auto dbghelp_module = GetModuleHandleW(L"dbghelp.dll");
+						if (dbghelp_module == nullptr)
 							goto continue_search;
 
 						const auto dbghelp_write_dump = reinterpret_cast<BOOL(WINAPI *)(HANDLE, DWORD, HANDLE, MINIDUMP_TYPE, PMINIDUMP_EXCEPTION_INFORMATION, PMINIDUMP_USER_STREAM_INFORMATION, PMINIDUMP_CALLBACK_INFORMATION)>(
-							GetProcAddress(dbghelp, "MiniDumpWriteDump"));
+							GetProcAddress(dbghelp_module, "MiniDumpWriteDump"));
 						if (dbghelp_write_dump == nullptr)
 							goto continue_search;
 
@@ -256,7 +262,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 						if (dbghelp_write_dump(GetCurrentProcess(), GetCurrentProcessId(), file, MiniDumpNormal, &info, nullptr, nullptr))
 							dump_index++;
 						else
-							LOG(ERROR) << "Failed to write minidump!";
+							reshade::log::message(reshade::log::level::error, "Failed to write minidump!");
 
 						CloseHandle(file);
 					}
@@ -280,11 +286,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 
 					reshade::hooks::register_module(L"user32.dll");
 
-					// Always register DirectInput 1-7 module (to overwrite cooperative level)
+					// Always register DirectInput 1-8 module (to overwrite cooperative level)
 					reshade::hooks::register_module(get_system_path() / L"dinput.dll");
-					// Register DirectInput 8 module in case it was used to load ReShade (but ignore otherwise)
-					if (_wcsicmp(module_name.c_str(), L"dinput8") == 0)
-						reshade::hooks::register_module(get_system_path() / L"dinput8.dll");
+					reshade::hooks::register_module(get_system_path() / L"dinput8.dll");
 				}
 
 #if RESHADE_ADDON == 1
@@ -306,6 +310,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 					// Only register D3D hooks when module is not called opengl32.dll
 					if (!is_opengl)
 					{
+						// Register DirectDraw module in case it was used to load ReShade (but ignore otherwise)
+						if (_wcsicmp(module_name.c_str(), L"ddraw") == 0)
+							reshade::hooks::register_module(get_system_path() / L"ddraw.dll");
+
 						reshade::hooks::register_module(get_system_path() / L"d2d1.dll");
 						reshade::hooks::register_module(get_system_path() / L"d3d9.dll");
 						reshade::hooks::register_module(get_system_path() / L"d3d10.dll");
@@ -335,16 +343,16 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 				}
 			}
 
-			LOG(INFO) << "Initialized.";
+			reshade::log::message(reshade::log::level::info, "Initialized.");
 			break;
 		}
 		case DLL_PROCESS_DETACH:
 		{
-			LOG(INFO) << "Exiting ...";
+			reshade::log::message(reshade::log::level::info, "Exiting ...");
 
 #if RESHADE_ADDON
 			if (reshade::has_loaded_addons())
-				LOG(WARN) << "Add-ons are still loaded! Application may crash on exit.";
+				reshade::log::message(reshade::log::level::warning, "Add-ons are still loaded! Application may crash on exit.");
 #endif
 
 			reshade::hooks::uninstall();
@@ -365,7 +373,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 				RemoveVectoredExceptionHandler(s_exception_handler_handle);
 #endif
 
-			LOG(INFO) << "Finished exiting.";
+			reshade::log::message(reshade::log::level::info, "Finished exiting.");
 			break;
 		}
 	}

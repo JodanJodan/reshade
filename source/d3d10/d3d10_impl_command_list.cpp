@@ -325,11 +325,23 @@ void reshade::d3d10::device_impl::push_constants(api::shader_stage stages, api::
 	if (count == 0)
 		return;
 
+	uint32_t push_constants_slot = 0;
+	if (layout != 0)
+	{
+		const api::descriptor_range &range = reinterpret_cast<pipeline_layout_impl *>(layout.handle)->ranges[layout_param];
+
+		push_constants_slot = range.dx_register_index;
+		stages &= range.visibility;
+	}
+
+	if (push_constants_slot >= D3D10_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT)
+		return;
+
 	count += first;
 
-	if (count > _push_constants_data.size())
+	if (count > _push_constants_data[push_constants_slot].size())
 	{
-		_push_constants_data.resize(count);
+		_push_constants_data[push_constants_slot].resize(count);
 
 		// Enlarge push constant buffer to fit new requirement
 		D3D10_BUFFER_DESC desc = {};
@@ -338,38 +350,30 @@ void reshade::d3d10::device_impl::push_constants(api::shader_stage stages, api::
 		desc.BindFlags = D3D10_BIND_CONSTANT_BUFFER;
 		desc.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
 
-		_push_constants.reset();
+		_push_constants[push_constants_slot].reset();
 
-		if (FAILED(_orig->CreateBuffer(&desc, nullptr, &_push_constants)))
+		if (FAILED(_orig->CreateBuffer(&desc, nullptr, &_push_constants[push_constants_slot])))
 		{
-			_push_constants_data.clear();
+			_push_constants_data[push_constants_slot].clear();
 
-			LOG(ERROR) << "Failed to create push constant buffer!";
+			log::message(log::level::error, "Failed to create push constant buffer!");
 			return;
 		}
 
-		set_resource_name({ reinterpret_cast<uintptr_t>(_push_constants.get()) }, "Push constants");
+		set_resource_name({ reinterpret_cast<uintptr_t>(_push_constants[push_constants_slot].get()) }, "Push constants");
 	}
 
-	std::memcpy(_push_constants_data.data() + first, values, (count - first) * sizeof(uint32_t));
+	std::memcpy(_push_constants_data[push_constants_slot].data() + first, values, (count - first) * sizeof(uint32_t));
 
-	ID3D10Buffer *const push_constants = _push_constants.get();
+	// Manage separate constant buffer per slot, so that it is possible to use multiple push constants ranges with different slots simultaneously
+	ID3D10Buffer *const push_constants = _push_constants[push_constants_slot].get();
 
 	// Discard the buffer to so driver can return a new memory region to avoid stalls
 	if (uint32_t *mapped_data;
 		SUCCEEDED(ID3D10Buffer_Map(push_constants, D3D10_MAP_WRITE_DISCARD, 0, reinterpret_cast<void **>(&mapped_data))))
 	{
-		std::memcpy(mapped_data, _push_constants_data.data(), _push_constants_data.size() * sizeof(uint32_t));
+		std::memcpy(mapped_data, _push_constants_data[push_constants_slot].data(), _push_constants_data[push_constants_slot].size() * sizeof(uint32_t));
 		ID3D10Buffer_Unmap(push_constants);
-	}
-
-	uint32_t push_constants_slot = 0;
-	if (layout != 0)
-	{
-		const api::descriptor_range &range = reinterpret_cast<pipeline_layout_impl *>(layout.handle)->ranges[layout_param];
-
-		push_constants_slot = range.dx_register_index;
-		stages &= range.visibility;
 	}
 
 	if ((stages & api::shader_stage::vertex) == api::shader_stage::vertex)
@@ -539,7 +543,7 @@ void reshade::d3d10::device_impl::copy_texture_to_buffer(api::resource, uint32_t
 {
 	assert(false);
 }
-void reshade::d3d10::device_impl::resolve_texture_region(api::resource src, uint32_t src_subresource, const api::subresource_box *src_box, api::resource dst, uint32_t dst_subresource, int32_t dst_x, int32_t dst_y, int32_t dst_z, api::format format)
+void reshade::d3d10::device_impl::resolve_texture_region(api::resource src, uint32_t src_subresource, const api::subresource_box *src_box, api::resource dst, uint32_t dst_subresource, uint32_t dst_x, uint32_t dst_y, uint32_t dst_z, api::format format)
 {
 	assert(src != 0 && dst != 0);
 	assert(src_box == nullptr && dst_x == 0 && dst_y == 0 && dst_z == 0);
@@ -601,6 +605,10 @@ void reshade::d3d10::device_impl::copy_acceleration_structure(api::resource_view
 	assert(false);
 }
 void reshade::d3d10::device_impl::build_acceleration_structure(api::acceleration_structure_type, api::acceleration_structure_build_flags, uint32_t, const api::acceleration_structure_build_input *, api::resource, uint64_t, api::resource_view, api::resource_view, api::acceleration_structure_build_mode)
+{
+	assert(false);
+}
+void reshade::d3d10::device_impl::query_acceleration_structures(uint32_t, const api::resource_view *, api::query_heap, api::query_type, uint32_t)
 {
 	assert(false);
 }

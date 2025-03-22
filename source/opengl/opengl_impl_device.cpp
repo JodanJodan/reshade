@@ -8,9 +8,8 @@
 #include "dll_log.hpp"
 #include "dll_resources.hpp"
 #include "ini_file.hpp"
-#include <cmath> // std::log2f
 #include <cstdio> // std::sscanf
-#include <cstring> // std::memcpy, std::strcmp, std::strncpy
+#include <cstring> // std::memcpy, std::strcmp, std::strncmp, std::strncpy
 #include <algorithm> // std::copy_n, std::fill_n, std::max
 
 #define gl gl3wProcs.gl
@@ -56,7 +55,9 @@ reshade::opengl::device_impl::device_impl(HDC initial_hdc, HGLRC shared_hglrc, b
 	if (pfd.dwFlags & PFD_STEREO)
 		_default_fbo_desc.texture.depth_or_layers = 2;
 
-	const auto wglGetProcAddress = reinterpret_cast<PROC(WINAPI *)(LPCSTR lpszProc)>(GetProcAddress(GetModuleHandleW(L"opengl32.dll"), "wglGetProcAddress"));
+	const auto opengl_module = GetModuleHandleW(L"opengl32.dll");
+	assert(opengl_module != nullptr);
+	const auto wglGetProcAddress = reinterpret_cast<PROC(WINAPI *)(LPCSTR lpszProc)>(GetProcAddress(opengl_module, "wglGetProcAddress"));
 	assert(wglGetProcAddress != nullptr);
 	const auto wglGetPixelFormatAttribivARB = reinterpret_cast<BOOL(WINAPI *)(HDC hdc, int iPixelFormat, int iLayerPlane, UINT nAttributes, const int *piAttributes, int *piValues)>(wglGetProcAddress("wglGetPixelFormatAttribivARB"));
 	if (wglGetPixelFormatAttribivARB != nullptr)
@@ -538,9 +539,14 @@ bool reshade::opengl::device_impl::create_resource(const api::resource_desc &des
 		gl.GenTextures(1, &object);
 		gl.BindTexture(target, object);
 
-		const GLuint levels = (desc.texture.levels != 0) ?
-			desc.texture.levels :
-			static_cast<uint32_t>(std::log2f(static_cast<float>(std::max(desc.texture.width, desc.texture.height)))) + 1;
+		GLuint levels = desc.texture.levels;
+		if (levels == 0)
+		{
+			DWORD bit_index = 0;
+			BitScanReverse(&bit_index, std::max(desc.texture.width, desc.texture.height));
+			levels = static_cast<GLuint>(bit_index) + 1;
+		}
+
 		GLuint depth_or_layers = desc.texture.depth_or_layers;
 
 #if 0
@@ -1473,12 +1479,12 @@ bool reshade::opengl::device_impl::map_texture_region(api::resource resource, ui
 
 	_map_lookup.emplace(hash, map_info {
 		*out_data, {
-			static_cast<int32_t>(xoffset),
-			static_cast<int32_t>(yoffset),
-			static_cast<int32_t>(zoffset),
-			static_cast<int32_t>(xoffset + width),
-			static_cast<int32_t>(yoffset + height),
-			static_cast<int32_t>(zoffset + depth)
+			xoffset,
+			yoffset,
+			zoffset,
+			xoffset + width,
+			yoffset + height,
+			zoffset + depth
 		}, access });
 
 	if (access == api::map_access::write_only || access == api::map_access::write_discard)
@@ -1609,8 +1615,10 @@ void reshade::opengl::device_impl::unmap_texture_region(api::resource resource, 
 void reshade::opengl::device_impl::update_buffer_region(const void *data, api::resource resource, uint64_t offset, uint64_t size)
 {
 	assert(resource != 0 && (resource.handle >> 40) == GL_BUFFER);
-	assert(data != nullptr);
 	assert(offset <= static_cast<uint64_t>(std::numeric_limits<GLintptr>::max()) && size <= static_cast<uint64_t>(std::numeric_limits<GLsizeiptr>::max()));
+
+	if (data == nullptr)
+		return;
 
 	const GLuint object = resource.handle & 0xFFFFFFFF;
 
@@ -1633,7 +1641,9 @@ void reshade::opengl::device_impl::update_buffer_region(const void *data, api::r
 void reshade::opengl::device_impl::update_texture_region(const api::subresource_data &data, api::resource resource, uint32_t subresource, const api::subresource_box *box)
 {
 	assert(resource != 0);
-	assert(data.data != nullptr);
+
+	if (data.data == nullptr)
+		return;
 
 	const GLenum target = resource.handle >> 40;
 	const GLuint object = resource.handle & 0xFFFFFFFF;
@@ -1791,7 +1801,7 @@ void reshade::opengl::device_impl::update_texture_region(const api::subresource_
 
 static bool create_shader_module(GLenum type, const reshade::api::shader_desc &desc, GLuint &shader_object)
 {
-	if (desc.code_size > 5 && strncmp(static_cast<const char *>(desc.code), "!!ARB", 5) == 0)
+	if (desc.code_size > 5 && std::strncmp(static_cast<const char *>(desc.code), "!!ARB", 5) == 0)
 	{
 		// Not implemented
 		return false;
@@ -1830,7 +1840,7 @@ static bool create_shader_module(GLenum type, const reshade::api::shader_desc &d
 			std::vector<char> log(log_size);
 			gl.GetShaderInfoLog(shader_object, log_size, nullptr, log.data());
 
-			LOG(ERROR) << "Failed to compile GLSL shader:\n" << log.data();
+			reshade::log::message(reshade::log::level::error, "Failed to compile GLSL shader:\n%s", log.data());
 		}
 
 		return false;
@@ -1976,7 +1986,7 @@ bool reshade::opengl::device_impl::create_pipeline(api::pipeline_layout, uint32_
 				std::vector<char> log(log_size);
 				gl.GetProgramInfoLog(impl->program, log_size, nullptr, log.data());
 
-				LOG(ERROR) << "Failed to link GLSL program:\n" << log.data();
+				reshade::log::message(reshade::log::level::error, "Failed to link GLSL program:\n%s", log.data());
 			}
 
 			gl.DeleteProgram(impl->program);
@@ -2106,7 +2116,8 @@ bool reshade::opengl::device_impl::create_pipeline_layout(uint32_t param_count, 
 				{
 					const uint32_t distance = range.binding - merged_range.binding;
 
-					assert(merged_range.count <= distance);
+					if (merged_range.count > distance)
+						return false; // Overlapping ranges are not supported
 
 					merged_range.count = distance + range.count;
 					merged_range.visibility |= range.visibility;
@@ -2115,7 +2126,8 @@ bool reshade::opengl::device_impl::create_pipeline_layout(uint32_t param_count, 
 				{
 					const uint32_t distance = merged_range.binding - range.binding;
 
-					assert(range.count <= distance);
+					if (range.count > distance)
+						return false;
 
 					merged_range.binding = range.binding;
 					merged_range.dx_register_index = range.dx_register_index;
@@ -2287,23 +2299,24 @@ void reshade::opengl::device_impl::update_descriptor_tables(uint32_t count, cons
 	}
 }
 
-bool reshade::opengl::device_impl::create_query_heap(api::query_type type, uint32_t size, api::query_heap *out_heap)
+bool reshade::opengl::device_impl::create_query_heap(api::query_type type, uint32_t count, api::query_heap *out_heap)
 {
 	*out_heap = { 0 };
 
-	if (type == api::query_type::pipeline_statistics)
+	if (type == api::query_type::pipeline_statistics ||
+		type >= api::query_type::acceleration_structure_size)
 		return false;
 
 	const auto impl = new query_heap_impl();
-	impl->queries.resize(size);
+	impl->queries.resize(count);
 
 	// TODO: Query objects cannot be shared across multiple render contexts
-	gl.GenQueries(static_cast<GLsizei>(size), impl->queries.data());
+	gl.GenQueries(static_cast<GLsizei>(count), impl->queries.data());
 
 	const GLenum target = convert_query_type(type);
 
 	// Actually create and associate query objects with the names generated by 'glGenQueries' above
-	for (uint32_t i = 0; i < size; ++i)
+	for (uint32_t i = 0; i < count; ++i)
 	{
 		if (type == api::query_type::timestamp)
 		{
