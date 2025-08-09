@@ -48,7 +48,10 @@ reshade::opengl::device_impl::device_impl(HDC initial_hdc, HGLRC shared_hglrc, b
 	_default_fbo_desc.type = reshade::api::resource_type::surface;
 	_default_fbo_desc.texture.width = window_rect.right;
 	_default_fbo_desc.texture.height = window_rect.bottom;
+	_default_fbo_desc.texture.depth_or_layers = 1;
+	_default_fbo_desc.texture.levels = 1;
 	_default_fbo_desc.texture.format = convert_pixel_format(pfd);
+	_default_fbo_desc.texture.samples = 1;
 	_default_fbo_desc.heap = reshade::api::memory_heap::gpu_only;
 	_default_fbo_desc.usage = reshade::api::resource_usage::render_target | reshade::api::resource_usage::copy_dest | reshade::api::resource_usage::copy_source | reshade::api::resource_usage::resolve_dest;
 
@@ -102,7 +105,8 @@ reshade::opengl::device_impl::device_impl(HDC initial_hdc, HGLRC shared_hglrc, b
 	// - Call of Duty uses buffer and texture names in range 0-1500
 	// - Call of Duty: United Offensive uses buffer names in range 0-2500
 	// - Star Wars Jedi Knight II: Jedi Outcast uses texture names in range 2000-3000
-	unsigned int num_reserve_buffer_names = _compatibility_context ? 4000 : 0;
+	// - The Chronicles of Riddick: Assault on Dark Athena uses buffer names in range 0-8000
+	unsigned int num_reserve_buffer_names = _compatibility_context ? 8000 : 0;
 	reshade::global_config().get("APP", "ReserveBufferNames", num_reserve_buffer_names);
 	_reserved_buffer_names.resize(num_reserve_buffer_names);
 	if (!_reserved_buffer_names.empty())
@@ -1363,7 +1367,7 @@ bool reshade::opengl::device_impl::map_buffer_region(api::resource resource, uin
 
 	if (_supports_dsa)
 	{
-		if (size == UINT64_MAX)
+		if (UINT64_MAX == size)
 		{
 #ifndef _WIN64
 			GLint max_size = 0;
@@ -1373,6 +1377,7 @@ bool reshade::opengl::device_impl::map_buffer_region(api::resource resource, uin
 			gl.GetNamedBufferParameteri64v(object, GL_BUFFER_SIZE, &max_size);
 #endif
 			size = max_size;
+			assert(size != 0);
 		}
 
 		*out_data = gl.MapNamedBufferRange(object, static_cast<GLintptr>(offset), static_cast<GLsizeiptr>(size), convert_access_flags(access));
@@ -1384,7 +1389,7 @@ bool reshade::opengl::device_impl::map_buffer_region(api::resource resource, uin
 		if (object != prev_binding)
 			gl.BindBuffer(GL_COPY_WRITE_BUFFER, object);
 
-		if (size == UINT64_MAX)
+		if (UINT64_MAX == size)
 		{
 #ifndef _WIN64
 			GLint max_size = 0;
@@ -1394,6 +1399,7 @@ bool reshade::opengl::device_impl::map_buffer_region(api::resource resource, uin
 			gl.GetBufferParameteri64v(GL_COPY_WRITE_BUFFER, GL_BUFFER_SIZE, &max_size);
 #endif
 			size = max_size;
+			assert(size != 0);
 		}
 
 		*out_data = gl.MapBufferRange(GL_COPY_WRITE_BUFFER, static_cast<GLintptr>(offset), static_cast<GLsizeiptr>(size), convert_access_flags(access));

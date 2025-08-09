@@ -35,7 +35,7 @@ namespace reshade
 
 		bool on_init();
 		void on_reset();
-		void on_present(api::command_queue *present_queue);
+		void on_present();
 
 		uint64_t get_native() const final { return _swapchain->get_native(); }
 
@@ -184,8 +184,7 @@ namespace reshade
 
 		bool load_effect(const std::filesystem::path &source_file, const ini_file &preset, size_t effect_index, size_t permutation_index, bool force_load = false, bool preprocess_required = false);
 		bool create_effect(size_t effect_index, size_t permutation_index);
-		bool create_effect_sampler_state(const reshadefx::sampler_desc &desc, api::sampler &sampler);
-		void destroy_effect(size_t effect_index);
+		void destroy_effect(size_t effect_index, bool unload = true);
 
 		void load_textures(size_t effect_index);
 		bool create_texture(texture &texture);
@@ -260,6 +259,7 @@ namespace reshade
 		static unsigned int s_latest_version[3];
 
 		bool _is_initialized = false;
+		bool _preset_is_incomplete = false;
 		bool _preset_save_successful = true;
 		std::filesystem::path _config_path;
 
@@ -272,9 +272,10 @@ namespace reshade
 		bool _effects_rendered_this_frame = false;
 		unsigned int _effects_key_data[4] = {};
 
+		std::chrono::system_clock::time_point _current_time;
+		uint64_t _frame_count = 0;
 		std::chrono::high_resolution_clock::duration _last_frame_duration;
 		std::chrono::high_resolution_clock::time_point _start_time, _last_present_time;
-		uint64_t _frame_count = 0;
 		#pragma endregion
 
 		#pragma region Effect Loading
@@ -341,9 +342,6 @@ namespace reshade
 		std::vector<api::resource_view> _back_buffer_targets;
 
 		api::state_block _app_state = {};
-
-		api::fence _queue_sync_fence = {};
-		uint64_t _queue_sync_value = 0;
 		#pragma endregion
 
 		#pragma region Screenshot
@@ -506,9 +504,8 @@ namespace reshade
 
 		#pragma region Overlay Log
 		char _log_filter[32] = {};
-		bool _log_wordwrap = false;
-		uintmax_t _last_log_size;
-		std::vector<std::string> _log_lines;
+		uintmax_t _last_log_size = 0;
+		imgui::code_editor _log_editor;
 		#pragma endregion
 
 		#pragma region Overlay Code Editor
